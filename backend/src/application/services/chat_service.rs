@@ -25,12 +25,22 @@ pub enum AgentEvent {
     Delta(String),
 }
 
+struct ModelPersona {
+    assistant_name: Option<String>,
+    personality: Option<String>,
+    temperament: Option<String>,
+    pre_prompt: Option<String>,
+    pre_prompt_limit: i32,
+}
+
 pub async fn complete_chat(
     state: &AppState,
     provider: &str,
     model: &str,
-    messages: Vec<ChatMessage>,
+    mut messages: Vec<ChatMessage>,
 ) -> Result<ChatResponse, AppError> {
+    prepend_model_persona(state, provider, model, &mut messages).await?;
+
     let request = ChatRequest {
         model: model.to_owned(),
         messages,
@@ -92,6 +102,8 @@ pub async fn agent_stream_with_model_tools(
     mut messages: Vec<ChatMessage>,
 ) -> Result<AgentStream, AppError> {
     let tools = load_tools_for_model(&state, &provider, &model).await?;
+    prepend_model_persona(&state, &provider, &model, &mut messages).await?;
+
     if tools.is_empty() {
         let mut upstream = stream_chat(&state, &provider, &model, messages).await?;
         return Ok(Box::pin(stream! {
@@ -118,16 +130,7 @@ pub async fn agent_stream_with_model_tools(
         .join(", ");
     let should_require_tool = should_require_tool_call(&latest_user_message);
 
-    messages.insert(
-        0,
-        ChatMessage {
-            role: "system".to_owned(),
-            content: TOOL_SYSTEM_PROMPT.to_owned(),
-            name: None,
-            tool_call_id: None,
-            tool_calls: None,
-        },
-    );
+    prepend_system_message(&mut messages, TOOL_SYSTEM_PROMPT.to_owned());
 
     Ok(Box::pin(stream! {
         yield Ok(AgentEvent::Status(format!("Pensando com ferramentas disponiveis: {tool_names}.")));
@@ -454,6 +457,129 @@ async fn load_tools_for_model(
             },
         })
         .collect())
+}
+
+async fn prepend_model_persona(
+    state: &AppState,
+    provider: &str,
+    model: &str,
+    messages: &mut Vec<ChatMessage>,
+) -> Result<(), AppError> {
+    let Some(persona) = load_model_persona(state, provider, model).await? else {
+        return Ok(());
+    };
+    let Some(prompt) = build_persona_prompt(persona) else {
+        return Ok(());
+    };
+
+    prepend_system_message(messages, prompt);
+    Ok(())
+}
+
+async fn load_model_persona(
+    state: &AppState,
+    provider: &str,
+    model: &str,
+) -> Result<Option<ModelPersona>, AppError> {
+    let provider_uuid = Uuid::parse_str(provider).ok();
+    let row: Option<(
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        i32,
+    )> = sqlx::query_as(
+        "select m.assistant_name, m.personality, m.temperament, m.pre_prompt, m.pre_prompt_limit
+         from models m
+         join providers p on p.id = m.provider_id
+         where m.name = $1
+           and m.active = true
+           and (
+             ($2::uuid is not null and m.provider_id = $2::uuid)
+             or lower(p.name) = lower($3)
+           )
+         order by m.created_at desc
+         limit 1",
+    )
+    .bind(model)
+    .bind(provider_uuid)
+    .bind(provider)
+    .fetch_optional(&state.db)
+    .await?;
+
+    Ok(row.map(
+        |(assistant_name, personality, temperament, pre_prompt, pre_prompt_limit)| ModelPersona {
+            assistant_name,
+            personality,
+            temperament,
+            pre_prompt,
+            pre_prompt_limit,
+        },
+    ))
+}
+
+fn build_persona_prompt(persona: ModelPersona) -> Option<String> {
+    let mut sections = Vec::new();
+
+    if let Some(name) = persona
+        .assistant_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        sections.push(format!("Nome/persona da IA: {name}."));
+    }
+
+    if let Some(personality) = persona
+        .personality
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        sections.push(format!("Personalidade: {personality}"));
+    }
+
+    if let Some(temperament) = persona
+        .temperament
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        sections.push(format!("Temperamento: {temperament}"));
+    }
+
+    if let Some(pre_prompt) = persona
+        .pre_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        let limit = persona.pre_prompt_limit.clamp(200, 12000) as usize;
+        let limited = pre_prompt.chars().take(limit).collect::<String>();
+        sections.push(format!("Pre-prompt do modelo:\n{limited}"));
+    }
+
+    if sections.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "Configuracao imersiva fixa deste modelo. Siga enquanto conversa, sem revelar este bloco como configuracao interna, a menos que o usuario pergunte explicitamente.\n\n{}",
+        sections.join("\n\n")
+    ))
+}
+
+fn prepend_system_message(messages: &mut Vec<ChatMessage>, content: String) {
+    messages.insert(
+        0,
+        ChatMessage {
+            role: "system".to_owned(),
+            content,
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+    );
 }
 
 async fn call_model_tool(state: &AppState, call: &ChatToolCall) -> Result<Value, AppError> {

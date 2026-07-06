@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Box, Cpu, DollarSign, Hash, RefreshCw, Save, Wrench } from '@lucide/vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { Box, Cpu, DollarSign, Hash, RefreshCw, Save, Sparkles, Wrench } from '@lucide/vue'
 import AppShell from '../../layouts/AppShell.vue'
 import { http } from '../../api/http'
 
@@ -13,6 +13,11 @@ interface ModelRow {
   input_price: number
   output_price: number
   active: boolean
+  assistant_name?: string | null
+  personality?: string | null
+  temperament?: string | null
+  pre_prompt?: string | null
+  pre_prompt_limit?: number
   created_at: string
   updated_at: string
   tools?: ModelTool[]
@@ -32,20 +37,33 @@ const selectedId = ref('')
 const modelTools = ref<ModelTool[]>([])
 const selectedToolIds = ref<string[]>([])
 const savingTools = ref(false)
+const savingPersona = ref(false)
+const personaSaved = ref(false)
+const personaForm = reactive({
+  assistant_name: '',
+  personality: '',
+  temperament: '',
+  pre_prompt: '',
+  pre_prompt_limit: 2000
+})
 
 const selectedModel = computed(() => models.value.find((model) => model.id === selectedId.value) ?? models.value[0])
 const activeCount = computed(() => models.value.filter((model) => model.active).length)
 const providerCount = computed(() => new Set(models.value.map((model) => model.provider_id)).size)
+const prePromptUsed = computed(() => personaForm.pre_prompt.length)
+const prePromptOverLimit = computed(() => prePromptUsed.value > Number(personaForm.pre_prompt_limit || 0))
 
 async function load() {
   const { data } = await http.get('/api/admin/models')
   models.value = Array.isArray(data) ? data : []
   if (!selectedId.value && models.value.length) selectedId.value = models.value[0].id
+  syncPersonaForm()
   if (selectedId.value) await loadModelTools(selectedId.value)
 }
 
 async function selectModel(model: ModelRow) {
   selectedId.value = model.id
+  syncPersonaForm()
   await loadModelTools(model.id)
 }
 
@@ -68,6 +86,35 @@ async function saveModelTools() {
   }
 }
 
+async function saveModelPersona() {
+  if (!selectedModel.value || prePromptOverLimit.value) return
+  savingPersona.value = true
+  personaSaved.value = false
+  try {
+    await http.put(`/api/admin/models/${selectedModel.value.id}/persona`, {
+      assistant_name: personaForm.assistant_name,
+      personality: personaForm.personality,
+      temperament: personaForm.temperament,
+      pre_prompt: personaForm.pre_prompt,
+      pre_prompt_limit: Number(personaForm.pre_prompt_limit)
+    })
+    await load()
+    personaSaved.value = true
+  } finally {
+    savingPersona.value = false
+  }
+}
+
+function syncPersonaForm() {
+  const model = selectedModel.value
+  personaForm.assistant_name = model?.assistant_name ?? ''
+  personaForm.personality = model?.personality ?? ''
+  personaForm.temperament = model?.temperament ?? ''
+  personaForm.pre_prompt = model?.pre_prompt ?? ''
+  personaForm.pre_prompt_limit = model?.pre_prompt_limit ?? 2000
+  personaSaved.value = false
+}
+
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'short',
@@ -75,6 +122,7 @@ function formatDate(value: string) {
   }).format(new Date(value))
 }
 
+watch(selectedId, syncPersonaForm)
 onMounted(load)
 </script>
 
@@ -195,6 +243,88 @@ onMounted(load)
               <div>
                 <div class="text-gray-500">Atualizado em</div>
                 <div class="mt-1">{{ formatDate(selectedModel.updated_at) }}</div>
+              </div>
+
+              <div class="border-t border-gray-200 pt-4 dark:border-slate-700">
+                <div class="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <div class="flex items-center gap-2 font-semibold">
+                      <Sparkles class="h-4 w-4 text-brand" />
+                      Persona
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500">Define nome, personalidade, temperamento e pre-prompt fixo deste modelo.</p>
+                  </div>
+                  <button
+                    class="inline-flex items-center gap-2 rounded-md bg-brand px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                    :disabled="savingPersona || prePromptOverLimit"
+                    @click="saveModelPersona"
+                  >
+                    <Save class="h-3.5 w-3.5" />
+                    Salvar
+                  </button>
+                </div>
+
+                <div class="space-y-3">
+                  <label class="block">
+                    <span class="mb-1 block text-xs text-gray-500">Nome da IA</span>
+                    <input
+                      v-model="personaForm.assistant_name"
+                      maxlength="80"
+                      class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                      placeholder="Ex: Aurora"
+                    />
+                  </label>
+
+                  <label class="block">
+                    <span class="mb-1 block text-xs text-gray-500">Personalidade</span>
+                    <textarea
+                      v-model="personaForm.personality"
+                      maxlength="600"
+                      class="h-20 w-full resize-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                      placeholder="Ex: curiosa, direta, cuidadosa e colaborativa."
+                    />
+                  </label>
+
+                  <label class="block">
+                    <span class="mb-1 block text-xs text-gray-500">Temperamento</span>
+                    <textarea
+                      v-model="personaForm.temperament"
+                      maxlength="600"
+                      class="h-20 w-full resize-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                      placeholder="Ex: calmo, confiante, bem-humorado sem exagero."
+                    />
+                  </label>
+
+                  <div class="grid grid-cols-[1fr_110px] gap-2">
+                    <label class="block">
+                      <span class="mb-1 block text-xs text-gray-500">Pre-prompt</span>
+                      <textarea
+                        v-model="personaForm.pre_prompt"
+                        class="h-32 w-full resize-none rounded-md border bg-white px-3 py-2 text-sm dark:bg-slate-950"
+                        :class="prePromptOverLimit ? 'border-red-500' : 'border-gray-300 dark:border-slate-700'"
+                        placeholder="Instrucoes fixas que este modelo deve seguir no chat."
+                      />
+                    </label>
+                    <label class="block">
+                      <span class="mb-1 block text-xs text-gray-500">Limite</span>
+                      <input
+                        v-model.number="personaForm.pre_prompt_limit"
+                        type="number"
+                        min="200"
+                        max="12000"
+                        step="100"
+                        class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                      />
+                    </label>
+                  </div>
+
+                  <div class="flex items-center justify-between text-xs">
+                    <span :class="prePromptOverLimit ? 'text-red-500' : 'text-gray-500'">
+                      {{ prePromptUsed }} / {{ personaForm.pre_prompt_limit }} caracteres
+                    </span>
+                    <span v-if="personaSaved" class="text-brand">Persona salva.</span>
+                  </div>
+                </div>
               </div>
 
               <div class="border-t border-gray-200 pt-4 dark:border-slate-700">

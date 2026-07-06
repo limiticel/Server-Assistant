@@ -16,6 +16,10 @@ pub fn routes() -> Router<AppState> {
         .route("/providers/:id", axum::routing::delete(delete_provider))
         .route("/models", get(list_models).post(create_model))
         .route(
+            "/models/:id/persona",
+            axum::routing::put(update_model_persona),
+        )
+        .route(
             "/models/:id/tools",
             get(list_model_tools).put(update_model_tools),
         )
@@ -62,6 +66,15 @@ struct McpToolPayload {
 #[derive(Deserialize)]
 struct ModelToolsPayload {
     tool_ids: Vec<Uuid>,
+}
+
+#[derive(Deserialize)]
+struct ModelPersonaPayload {
+    assistant_name: Option<String>,
+    personality: Option<String>,
+    temperament: Option<String>,
+    pre_prompt: Option<String>,
+    pre_prompt_limit: Option<i32>,
 }
 
 async fn dashboard(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
@@ -221,7 +234,9 @@ async fn list_models(State(state): State<AppState>) -> Result<Json<serde_json::V
         "select coalesce(json_agg(t), '[]'::json)
          from (
            select m.id, m.provider_id, p.name as provider_name, m.name, m.context_window,
-                  m.input_price, m.output_price, m.active, m.created_at, m.updated_at,
+                  m.input_price, m.output_price, m.active,
+                  m.assistant_name, m.personality, m.temperament, m.pre_prompt, m.pre_prompt_limit,
+                  m.created_at, m.updated_at,
                   coalesce(
                     (
                       select json_agg(json_build_object(
@@ -296,6 +311,49 @@ async fn update_model_tools(
     transaction.commit().await?;
 
     Ok(Json(serde_json::json!({ "saved": true, "model_id": id })))
+}
+
+async fn update_model_persona(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+    Json(payload): Json<ModelPersonaPayload>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let limit = payload.pre_prompt_limit.unwrap_or(2000).clamp(200, 12000);
+    let pre_prompt = clean_optional_text(payload.pre_prompt, limit as usize);
+
+    let result = sqlx::query(
+        "update models
+         set assistant_name = $2,
+             personality = $3,
+             temperament = $4,
+             pre_prompt = $5,
+             pre_prompt_limit = $6,
+             updated_at = now()
+         where id = $1",
+    )
+    .bind(id)
+    .bind(clean_optional_text(payload.assistant_name, 80))
+    .bind(clean_optional_text(payload.personality, 600))
+    .bind(clean_optional_text(payload.temperament, 600))
+    .bind(pre_prompt)
+    .bind(limit)
+    .execute(&state.db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(Json(serde_json::json!({
+        "id": id,
+        "updated": true
+    })))
+}
+
+fn clean_optional_text(value: Option<String>, max_chars: usize) -> Option<String> {
+    value
+        .map(|text| text.trim().chars().take(max_chars).collect::<String>())
+        .filter(|text| !text.is_empty())
 }
 
 async fn create_model(
