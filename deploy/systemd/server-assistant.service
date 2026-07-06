@@ -1,0 +1,15 @@
+[Unit]
+Description=Server Assistant Backend
+After=network.target postgresql.service
+
+[Service]
+User=server-assistant
+WorkingDirectory=/opt/server-assistant/backend
+EnvironmentFile=/opt/server-assistant/.env
+ExecStart=/usr/local/bin/server-assistant-backend
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
