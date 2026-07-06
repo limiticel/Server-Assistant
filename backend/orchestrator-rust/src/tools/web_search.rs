@@ -41,25 +41,28 @@ fn web_search(args: &Value, _registry: &Registry) -> ToolResult {
         "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
         percent_encode(&search_query)
     );
-    let output = Command::new(curl_command())
-        .arg("-L")
-        .arg("-s")
-        .arg("--max-time")
-        .arg("20")
-        .arg(&url)
-        .output()
-        .map_err(|err| format!("Failed to execute curl: {err}"))?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "Search request failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    let response: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|err| format!("Invalid search response JSON: {err}"))?;
+    let duckduckgo_response = http_get(&url);
+    let response: Value = match duckduckgo_response {
+        Ok(body) => serde_json::from_str(&body)
+            .map_err(|err| format!("Invalid search response JSON: {err}"))?,
+        Err(err) => {
+            let results = bing_rss_search(&search_query, max_results).map_err(|fallback_err| {
+                format!("{err}; RSS fallback also failed: {fallback_err}")
+            })?;
+            return Ok(json!({
+                "query": query,
+                "search_query": search_query,
+                "source": "bing_rss_fallback",
+                "heading": "",
+                "abstract": "",
+                "abstract_url": "",
+                "official_website": "",
+                "results": results
+            }));
+        }
+    };
     let mut results = Vec::new();
+    let mut source = "duckduckgo_instant_answer";
 
     if let Some(items) = response.get("Results").and_then(Value::as_array) {
         collect_results(items, &mut results, max_results);
@@ -78,12 +81,13 @@ fn web_search(args: &Value, _registry: &Registry) -> ToolResult {
             .is_empty()
     {
         results = bing_rss_search(&search_query, max_results)?;
+        source = "bing_rss_fallback";
     }
 
     Ok(json!({
         "query": query,
         "search_query": search_query,
-        "source": if results.is_empty() { "duckduckgo_instant_answer" } else { "web_search" },
+        "source": source,
         "heading": response.get("Heading").and_then(Value::as_str).unwrap_or_default(),
         "abstract": response
             .get("AbstractText")
@@ -116,23 +120,7 @@ fn bing_rss_search(query: &str, max_results: usize) -> Result<Vec<Value>, String
         "https://www.bing.com/search?q={}&format=rss",
         percent_encode(query)
     );
-    let output = Command::new(curl_command())
-        .arg("-L")
-        .arg("-s")
-        .arg("--max-time")
-        .arg("20")
-        .arg(&url)
-        .output()
-        .map_err(|err| format!("Failed to execute curl for RSS fallback: {err}"))?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "RSS fallback failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    let xml = String::from_utf8_lossy(&output.stdout);
+    let xml = http_get(&url)?;
     let mut results = Vec::new();
 
     for item in xml.split("<item>").skip(1) {
@@ -158,6 +146,43 @@ fn bing_rss_search(query: &str, max_results: usize) -> Result<Vec<Value>, String
     }
 
     Ok(results)
+}
+
+fn http_get(url: &str) -> Result<String, String> {
+    let output = Command::new(curl_command())
+        .arg("-L")
+        .arg("-sS")
+        .arg("--connect-timeout")
+        .arg("10")
+        .arg("--max-time")
+        .arg("25")
+        .arg("--retry")
+        .arg("1")
+        .arg("-A")
+        .arg("ServerAssistantBot/1.0")
+        .arg(url)
+        .output()
+        .map_err(|err| format!("Failed to execute curl: {err}"))?;
+
+    if output.status.success() {
+        return String::from_utf8(output.stdout)
+            .map_err(|err| format!("Search response was not valid UTF-8: {err}"));
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let detail = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        "curl exited without stderr/stdout".to_owned()
+    };
+
+    Err(format!(
+        "Search request failed for {url} with status {:?}: {detail}",
+        output.status.code()
+    ))
 }
 
 fn extract_xml_field(item: &str, field: &str) -> String {
