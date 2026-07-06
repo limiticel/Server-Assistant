@@ -14,7 +14,7 @@ use crate::{
     AppState,
 };
 
-const TOOL_SYSTEM_PROMPT: &str = "Voce tem acesso a ferramentas reais deste sistema. Use ferramentas quando elas ajudarem a responder com dados reais, buscar informacoes atuais ou executar uma acao solicitada. Se o usuario pedir para voce tentar, executar, rodar, testar, verificar, diagnosticar, conectar ou administrar o servidor, chame ubuntu_server_ssh. Quando o usuario enviar um comando de terminal e pedir para voce tentar, execute esse comando pela ferramenta, sem apenas explicar. Se o usuario pedir busca, pesquisa, site oficial, noticia ou informacao atual da internet, chame web_search. Nao diga que nao tem capacidade de acessar sistemas externos quando uma ferramenta adequada estiver disponivel. Para comandos de servidor, prefira comandos somente leitura quando o usuario pedir diagnostico.";
+const TOOL_SYSTEM_PROMPT: &str = "Voce tem acesso a ferramentas reais deste sistema. Use ferramentas quando elas ajudarem a responder com dados reais, buscar informacoes atuais ou executar uma acao solicitada. Se o usuario pedir para voce tentar, executar, rodar, testar, verificar, diagnosticar, conectar ou administrar o servidor, chame ubuntu_server_ssh. Quando o usuario enviar um comando de terminal e pedir para voce tentar, execute esse comando pela ferramenta, sem apenas explicar. Se o usuario pedir busca, pesquisa, site oficial, noticia ou informacao atual da internet, chame web_search. Se o usuario pedir banco de dados, PostgreSQL, schema, tabelas ou consultas SQL, prefira postgres_query. O banco deste projeto e PostgreSQL; nao use mysql salvo se o usuario pedir MySQL explicitamente. Nunca use comandos interativos como psql sem -c, sudo -i, sudo su ou sudo que exige terminal. Para PostgreSQL, use postgres_query ou comandos psql nao-interativos. Para status de servicos, prefira comandos sem sudo como systemctl is-active postgresql, systemctl status postgresql --no-pager ou service postgresql status. Nao diga que nao tem capacidade de acessar sistemas externos quando uma ferramenta adequada estiver disponivel. Para comandos de servidor, prefira comandos somente leitura quando o usuario pedir diagnostico.";
 
 pub type AgentStream = BoxStream<'static, Result<AgentEvent, AppError>>;
 
@@ -615,7 +615,17 @@ async fn merge_tool_config_arguments(
         return Ok(());
     };
 
-    for key in ["username", "password", "host", "port"] {
+    for key in [
+        "username",
+        "password",
+        "host",
+        "port",
+        "db_host",
+        "db_port",
+        "db_user",
+        "db_password",
+        "db_name",
+    ] {
         if target.contains_key(key) {
             continue;
         }

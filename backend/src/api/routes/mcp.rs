@@ -57,7 +57,17 @@ async fn merge_tool_config_arguments(
         return Ok(());
     };
 
-    for key in ["username", "password", "host", "port"] {
+    for key in [
+        "username",
+        "password",
+        "host",
+        "port",
+        "db_host",
+        "db_port",
+        "db_user",
+        "db_password",
+        "db_name",
+    ] {
         if target.contains_key(key) {
             continue;
         }
