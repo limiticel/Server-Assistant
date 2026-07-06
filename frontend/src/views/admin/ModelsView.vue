@@ -74,6 +74,8 @@ function formatDate(value: string) {
     timeStyle: 'short'
   }).format(new Date(value))
 }
+
+onMounted(load)
 </script>
 
 <template>
