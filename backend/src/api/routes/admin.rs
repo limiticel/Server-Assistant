@@ -3,8 +3,10 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use reqwest::Client;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::{shared::AppError, AppState};
@@ -101,7 +103,7 @@ async fn dashboard(State(state): State<AppState>) -> Result<Json<serde_json::Val
     .fetch_one(&state.db)
     .await?;
 
-    let billable_by_provider: serde_json::Value = sqlx::query_scalar(
+    let mut billable_by_provider: serde_json::Value = sqlx::query_scalar(
         "select coalesce(json_agg(row_to_json(t)), '[]'::json)
          from (
            select
@@ -122,6 +124,21 @@ async fn dashboard(State(state): State<AppState>) -> Result<Json<serde_json::Val
     .fetch_one(&state.db)
     .await?;
 
+    let estimated_cost_usd = billable
+        .3
+        .as_deref()
+        .unwrap_or("0")
+        .parse::<f64>()
+        .unwrap_or(0.0);
+    let exchange_rate = fetch_usd_brl_rate().await;
+    let estimated_cost_brl = exchange_rate
+        .as_ref()
+        .map(|rate| format!("{:.6}", estimated_cost_usd * rate.rate));
+    add_brl_costs(
+        &mut billable_by_provider,
+        exchange_rate.as_ref().map(|rate| rate.rate),
+    );
+
     Ok(Json(serde_json::json!({
         "general": {
             "users": users.0,
@@ -134,10 +151,78 @@ async fn dashboard(State(state): State<AppState>) -> Result<Json<serde_json::Val
             "prompt_tokens": billable.0.unwrap_or(0),
             "completion_tokens": billable.1.unwrap_or(0),
             "total_tokens": billable.2.unwrap_or(0),
-            "estimated_cost": billable.3.unwrap_or_else(|| "0".to_owned()),
+            "estimated_cost": format!("{estimated_cost_usd:.6}"),
+            "estimated_cost_usd": format!("{estimated_cost_usd:.6}"),
+            "estimated_cost_brl": estimated_cost_brl,
+            "currency": "BRL",
+            "source_currency": "USD",
+            "exchange_rate": exchange_rate.as_ref().map(|rate| rate.rate),
+            "exchange_rate_date": exchange_rate.as_ref().map(|rate| rate.date.clone()),
+            "exchange_rate_source": exchange_rate.as_ref().map(|rate| rate.source),
             "by_provider": billable_by_provider
         }
     })))
+}
+
+#[derive(Clone)]
+struct ExchangeRate {
+    rate: f64,
+    date: String,
+    source: &'static str,
+}
+
+#[derive(Deserialize)]
+struct FrankfurterRateResponse {
+    date: String,
+    rate: f64,
+}
+
+async fn fetch_usd_brl_rate() -> Option<ExchangeRate> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(4))
+        .build()
+        .ok()?;
+
+    let response = client
+        .get("https://api.frankfurter.dev/v2/rate/USD/BRL")
+        .send()
+        .await
+        .ok()?;
+
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let body = response.json::<FrankfurterRateResponse>().await.ok()?;
+    Some(ExchangeRate {
+        rate: body.rate,
+        date: body.date,
+        source: "frankfurter.dev",
+    })
+}
+
+fn add_brl_costs(rows: &mut Value, usd_brl_rate: Option<f64>) {
+    let Some(rate) = usd_brl_rate else {
+        return;
+    };
+    let Some(items) = rows.as_array_mut() else {
+        return;
+    };
+
+    for item in items {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+        let usd = object
+            .get("estimated_cost")
+            .and_then(Value::as_str)
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        object.insert(
+            "estimated_cost_brl".to_owned(),
+            json!(format!("{:.6}", usd * rate)),
+        );
+    }
 }
 
 async fn list_providers(

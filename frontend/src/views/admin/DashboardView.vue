@@ -11,6 +11,7 @@ interface ProviderUsage {
   completion_tokens: number
   total_tokens: number
   estimated_cost: string
+  estimated_cost_brl?: string | null
 }
 
 interface DashboardStats {
@@ -25,6 +26,13 @@ interface DashboardStats {
     completion_tokens: number
     total_tokens: number
     estimated_cost: string
+    estimated_cost_usd?: string
+    estimated_cost_brl?: string | null
+    currency?: string
+    source_currency?: string
+    exchange_rate?: number
+    exchange_rate_date?: string
+    exchange_rate_source?: string
     by_provider: ProviderUsage[]
   }
 }
@@ -53,12 +61,26 @@ const billableCards = computed(() => [
   { label: 'Prompt', value: stats.value.billable_usage?.prompt_tokens ?? 0, hint: 'Tokens enviados' },
   { label: 'Completion', value: stats.value.billable_usage?.completion_tokens ?? 0, hint: 'Tokens gerados' },
   { label: 'Total', value: stats.value.billable_usage?.total_tokens ?? 0, hint: 'Prompt + completion' },
-  { label: 'Custo', value: formatCurrency(stats.value.billable_usage?.estimated_cost ?? '0'), hint: 'Estimativa atual' }
+  {
+    label: 'Custo',
+    value: formatCost(stats.value.billable_usage?.estimated_cost_brl, stats.value.billable_usage?.estimated_cost_usd),
+    hint: stats.value.billable_usage?.estimated_cost_brl
+      ? `Estimativa em BRL (${formatUSD(stats.value.billable_usage?.estimated_cost_usd ?? 0)})`
+      : 'Estimativa em USD'
+  }
 ])
 
 const totalTokens = computed(() => stats.value.billable_usage?.total_tokens ?? 0)
 const promptShare = computed(() => percent(stats.value.billable_usage?.prompt_tokens ?? 0, totalTokens.value))
 const completionShare = computed(() => percent(stats.value.billable_usage?.completion_tokens ?? 0, totalTokens.value))
+const exchangeRateLabel = computed(() => {
+  const rate = stats.value.billable_usage?.exchange_rate
+  if (!rate) return 'Cotacao USD/BRL indisponivel; exibindo custo em USD.'
+
+  const date = stats.value.billable_usage?.exchange_rate_date
+  const source = stats.value.billable_usage?.exchange_rate_source ?? 'API de cambio'
+  return `Cotacao ${source}: US$1 = ${formatBRL(rate)}${date ? ` em ${date}` : ''}.`
+})
 
 async function load() {
   loading.value = true
@@ -77,10 +99,26 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat('pt-BR').format(value)
 }
 
-function formatCurrency(value: string | number) {
+function formatUSD(value: string | number) {
   const numeric = Number(value)
-  if (!Number.isFinite(numeric)) return '$0.000000'
-  return `$${numeric.toFixed(6)}`
+  if (!Number.isFinite(numeric)) return 'US$0.000000'
+  return `US$${numeric.toFixed(6)}`
+}
+
+function formatBRL(value: string | number) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 'R$0,00'
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 6,
+    maximumFractionDigits: 6
+  }).format(numeric)
+}
+
+function formatCost(valueBrl?: string | null, valueUsd?: string | number) {
+  if (valueBrl) return formatBRL(valueBrl)
+  return formatUSD(valueUsd ?? 0)
 }
 
 function percent(value: number, total: number) {
@@ -138,7 +176,7 @@ onMounted(load)
             <div>
               <h2 class="text-sm font-semibold">Custo estimado parcial</h2>
               <p class="mt-2 text-sm leading-6">
-                Tokens e custo estimado entram somente para OpenAI e Claude/Anthropic. Providers locais ou compativeis aparecem no uso geral, mas ainda ficam fora do calculo financeiro.
+                Custos da OpenAI sao calculados em USD e convertidos para real usando cotacao atual da API Frankfurter. Providers locais continuam fora do calculo financeiro.
               </p>
             </div>
           </div>
@@ -150,6 +188,7 @@ onMounted(load)
           <div>
             <div class="text-xs font-semibold uppercase text-gray-500">Uso contabilizado</div>
             <div class="mt-1 text-sm text-gray-500">Distribuicao dos tokens com custo rastreado.</div>
+            <div class="mt-1 text-xs text-gray-500">{{ exchangeRateLabel }}</div>
           </div>
           <div class="inline-flex rounded-md border border-gray-300 bg-gray-50 p-1 text-sm dark:border-slate-700 dark:bg-slate-950">
             <button class="rounded px-3 py-1.5" :class="activeView === 'overview' ? 'bg-white text-ink shadow-sm dark:bg-slate-800 dark:text-slate-100' : 'text-gray-500'" @click="activeView = 'overview'">Resumo</button>
@@ -193,7 +232,10 @@ onMounted(load)
                 </div>
                 <div class="text-right">
                   <div class="font-semibold">{{ formatNumber(row.total_tokens) }}</div>
-                  <div class="text-xs text-gray-500">{{ formatCurrency(row.estimated_cost) }}</div>
+                  <div class="text-xs text-gray-500">
+                    {{ formatCost(row.estimated_cost_brl, row.estimated_cost) }}
+                    <span v-if="row.estimated_cost_brl" class="ml-1">({{ formatUSD(row.estimated_cost) }})</span>
+                  </div>
                 </div>
               </div>
               <div class="mt-4 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-slate-800">
