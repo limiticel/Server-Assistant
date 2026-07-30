@@ -230,6 +230,12 @@ export const useChatStore = defineStore('chat', {
                 }
               ]
             }
+            if (parsed.event === 'conversation_title') {
+              const data = parseJsonEvent(parsed.data)
+              if (data?.conversation_id && data?.title) {
+                this.applyConversationTitle(data.conversation_id, data.title)
+              }
+            }
             if (parsed.event === 'error') {
               throw new Error(parsed.data)
             }
@@ -257,6 +263,13 @@ export const useChatStore = defineStore('chat', {
     cancelResponse(conversationId?: string) {
       const targetConversationId = conversationId ?? this.activeConversationId
       this.abortControllers[targetConversationId]?.abort()
+    },
+    applyConversationTitle(conversationId: string, title: string) {
+      const cleanTitle = title.trim()
+      if (!cleanTitle) return
+
+      const conversation = this.conversations.find((item) => item.id === conversationId)
+      if (conversation) conversation.title = cleanTitle
     }
   }
 })

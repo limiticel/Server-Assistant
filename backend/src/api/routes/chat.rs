@@ -174,7 +174,7 @@ async fn send_message(
     sqlx::query("insert into messages (id, conversation_id, role, content, provider, model) values ($1, $2, 'user', $3, $4, $5)")
         .bind(Uuid::new_v4())
         .bind(conversation_id)
-        .bind(payload.content)
+        .bind(&payload.content)
         .bind(&payload.provider)
         .bind(&payload.model)
         .execute(&state.db)
@@ -189,7 +189,20 @@ async fn send_message(
         .execute(&state.db)
         .await?;
 
-    Ok(Json(serde_json::json!({ "content": response.content })))
+    let title = generate_and_save_conversation_title(
+        &state,
+        conversation_id,
+        &payload.provider,
+        &payload.model,
+        &payload.content,
+        &response.content,
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({
+        "content": response.content,
+        "conversation_title": title
+    })))
 }
 
 async fn stream_message(
@@ -278,6 +291,21 @@ async fn stream_message(
             &full_content,
         )
         .await;
+
+        if let Some(title) = generate_and_save_conversation_title(
+            &state,
+            conversation_id,
+            &provider,
+            &model,
+            &payload.content,
+            &full_content,
+        )
+        .await {
+            yield Ok(Event::default().event("conversation_title").data(serde_json::json!({
+                "conversation_id": conversation_id,
+                "title": title
+            }).to_string()));
+        }
 
         yield Ok(Event::default().event("done").data("[DONE]"));
     };
@@ -381,6 +409,111 @@ fn normalize_summary_text(content: &str) -> String {
         .take(PER_MESSAGE_LIMIT)
         .collect::<String>()
         + "..."
+}
+
+async fn generate_and_save_conversation_title(
+    state: &AppState,
+    conversation_id: Uuid,
+    provider: &str,
+    model: &str,
+    user_message: &str,
+    assistant_message: &str,
+) -> Option<String> {
+    if !conversation_has_default_title(state, conversation_id)
+        .await
+        .ok()?
+    {
+        return None;
+    }
+
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_owned(),
+            content: "Voce nomeia conversas automaticamente. Crie um titulo curto em portugues do Brasil, com 2 a 6 palavras, especifico sobre o assunto. Responda somente com o titulo, sem aspas, sem pontuacao final e sem prefixos.".to_owned(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+        ChatMessage {
+            role: "user".to_owned(),
+            content: format!(
+                "Mensagem do usuario:\n{}\n\nResposta da IA:\n{}",
+                truncate_title_context(user_message),
+                truncate_title_context(assistant_message)
+            ),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+    ];
+
+    let response = chat_service::complete_chat(state, provider, model, messages)
+        .await
+        .ok()?;
+    let title = clean_generated_title(&response.content);
+    if title.is_empty() {
+        return None;
+    }
+
+    if !conversation_has_default_title(state, conversation_id)
+        .await
+        .ok()?
+    {
+        return None;
+    }
+
+    let updated =
+        sqlx::query("update conversations set title = $2, updated_at = now() where id = $1")
+            .bind(conversation_id)
+            .bind(&title)
+            .execute(&state.db)
+            .await
+            .ok()?;
+
+    if updated.rows_affected() == 0 {
+        return None;
+    }
+
+    Some(title)
+}
+
+async fn conversation_has_default_title(
+    state: &AppState,
+    conversation_id: Uuid,
+) -> Result<bool, AppError> {
+    let title: Option<String> = sqlx::query_scalar("select title from conversations where id = $1")
+        .bind(conversation_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+    Ok(title
+        .as_deref()
+        .map(str::trim)
+        .map(|value| value.is_empty() || matches!(value, "Novo chat" | "Conversa"))
+        .unwrap_or(false))
+}
+
+fn clean_generated_title(title: &str) -> String {
+    let cleaned = title
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_matches(|char| matches!(char, '"' | '\'' | '`' | '.' | ':' | '-' | ' '))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    cleaned.chars().take(48).collect()
+}
+
+fn truncate_title_context(content: &str) -> String {
+    let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= 900 {
+        return normalized;
+    }
+
+    normalized.chars().take(900).collect::<String>() + "..."
 }
 
 async fn stream_chat(
