@@ -53,6 +53,11 @@ class ProposalStatusResponse(BaseModel):
     message: str
 
 
+class ProposalStatusQuery(BaseModel):
+    proposal_id: str | None = None
+    cpf: str | None = None
+
+
 def only_digits(value: str) -> str:
     return "".join(char for char in value if char.isdigit())
 
@@ -95,6 +100,57 @@ def build_credit_simulation(cpf: str) -> CreditSimulation:
         credit_limit=credit_limit,
         interest_rate_monthly=interest_rate,
         term_months=term_months,
+        message=message,
+    )
+
+
+def normalize_proposal_id(proposal_id: str) -> str:
+    return proposal_id.strip().upper()
+
+
+def find_proposal(proposal_id: str | None = None, cpf: str | None = None) -> dict:
+    if proposal_id:
+        proposal = PROPOSALS.get(normalize_proposal_id(proposal_id))
+        if proposal:
+            return proposal
+
+    if cpf:
+        clean_cpf = only_digits(cpf)
+        matches = [proposal for proposal in PROPOSALS.values() if proposal["cpf"] == clean_cpf]
+        if matches:
+            return matches[-1]
+
+    raise HTTPException(
+        status_code=404,
+        detail="Proposta nao encontrada. Informe proposal_id retornado no cadastro ou o CPF usado na proposta.",
+    )
+
+
+def build_proposal_status_response(proposal: dict) -> ProposalStatusResponse:
+    proposal["status_checks"] += 1
+
+    if proposal["status"] == "created" and proposal["status_checks"] >= 2:
+        proposal["status"] = "approved"
+
+    status = proposal["status"]
+    if status == "approved":
+        message = "Proposta aprovada na verificacao fake."
+    elif status == "manual_review":
+        message = "Proposta ainda em analise manual fake."
+    elif status == "rejected":
+        message = "Proposta recusada na verificacao fake."
+    else:
+        message = "Proposta criada e aguardando processamento fake."
+
+    return ProposalStatusResponse(
+        proposal_id=proposal["proposal_id"],
+        cpf=proposal["cpf"],
+        customer_name=proposal["customer_name"],
+        requested_amount=proposal["requested_amount"],
+        term_months=proposal["term_months"],
+        status=status,
+        score=proposal["score"],
+        credit_limit=proposal["credit_limit"],
         message=message,
     )
 
@@ -158,35 +214,39 @@ def create_proposal(payload: ProposalCreateRequest):
     )
 
 
+@app.post("/proposal", response_model=ProposalCreateResponse)
+def create_proposal_alias(payload: ProposalCreateRequest):
+    return create_proposal(payload)
+
+
 @app.get("/proposals/{proposal_id}/status", response_model=ProposalStatusResponse)
 def proposal_status(proposal_id: str):
-    proposal = PROPOSALS.get(proposal_id)
-    if not proposal:
-        raise HTTPException(status_code=404, detail="Proposta nao encontrada.")
+    proposal = find_proposal(proposal_id=proposal_id)
+    return build_proposal_status_response(proposal)
 
-    proposal["status_checks"] += 1
 
-    if proposal["status"] == "created" and proposal["status_checks"] >= 2:
-        proposal["status"] = "approved"
+@app.get("/proposal/{proposal_id}/status", response_model=ProposalStatusResponse)
+def proposal_status_alias(proposal_id: str):
+    return proposal_status(proposal_id)
 
-    status = proposal["status"]
-    if status == "approved":
-        message = "Proposta aprovada na verificacao fake."
-    elif status == "manual_review":
-        message = "Proposta ainda em analise manual fake."
-    elif status == "rejected":
-        message = "Proposta recusada na verificacao fake."
-    else:
-        message = "Proposta criada e aguardando processamento fake."
 
-    return ProposalStatusResponse(
-        proposal_id=proposal["proposal_id"],
-        cpf=proposal["cpf"],
-        customer_name=proposal["customer_name"],
-        requested_amount=proposal["requested_amount"],
-        term_months=proposal["term_months"],
-        status=status,
-        score=proposal["score"],
-        credit_limit=proposal["credit_limit"],
-        message=message,
-    )
+@app.get("/proposals/status", response_model=ProposalStatusResponse)
+def proposal_status_query(proposal_id: str | None = None, cpf: str | None = None):
+    proposal = find_proposal(proposal_id=proposal_id, cpf=cpf)
+    return build_proposal_status_response(proposal)
+
+
+@app.get("/proposal/status", response_model=ProposalStatusResponse)
+def proposal_status_query_alias(proposal_id: str | None = None, cpf: str | None = None):
+    return proposal_status_query(proposal_id=proposal_id, cpf=cpf)
+
+
+@app.post("/proposals/status", response_model=ProposalStatusResponse)
+def proposal_status_post(payload: ProposalStatusQuery):
+    proposal = find_proposal(proposal_id=payload.proposal_id, cpf=payload.cpf)
+    return build_proposal_status_response(proposal)
+
+
+@app.post("/proposal/status", response_model=ProposalStatusResponse)
+def proposal_status_post_alias(payload: ProposalStatusQuery):
+    return proposal_status_post(payload)
