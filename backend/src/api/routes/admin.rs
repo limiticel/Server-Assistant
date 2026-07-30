@@ -95,8 +95,8 @@ async fn dashboard(State(state): State<AppState>) -> Result<Json<serde_json::Val
            coalesce(sum(t.estimated_cost), 0)::text
          from token_usage t
          left join providers p on p.id::text = t.provider
-         where lower(coalesce(p.provider_type, t.provider)) in ('openai', 'anthropic', 'claude')
-            or lower(coalesce(p.name, t.provider)) = 'openai'",
+         where lower(coalesce(p.provider_type, t.provider)) in ('openai', 'openai_compatible', 'anthropic', 'claude')
+            or lower(coalesce(p.name, t.provider)) like '%openai%'",
     )
     .fetch_one(&state.db)
     .await?;
@@ -113,8 +113,8 @@ async fn dashboard(State(state): State<AppState>) -> Result<Json<serde_json::Val
              coalesce(sum(token_usage.estimated_cost), 0)::text as estimated_cost
            from token_usage
            left join providers p on p.id::text = token_usage.provider
-           where lower(coalesce(p.provider_type, token_usage.provider)) in ('openai', 'anthropic', 'claude')
-              or lower(coalesce(p.name, token_usage.provider)) = 'openai'
+           where lower(coalesce(p.provider_type, token_usage.provider)) in ('openai', 'openai_compatible', 'anthropic', 'claude')
+              or lower(coalesce(p.name, token_usage.provider)) like '%openai%'
            group by coalesce(p.name, token_usage.provider), lower(coalesce(p.provider_type, token_usage.provider))
            order by total_tokens desc
          ) t",

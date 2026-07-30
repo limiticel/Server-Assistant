@@ -58,9 +58,19 @@ pub async fn complete_chat(
         Some(db_provider) => db_provider.chat(request).await?,
         None => state.providers.get(provider)?.chat(request).await?,
     };
+    let estimated_cost = estimate_cost(
+        &state.db,
+        provider,
+        model,
+        response.prompt_tokens,
+        response.completion_tokens,
+    )
+    .await
+    .unwrap_or(0.0);
+
     let _ = sqlx::query(
         "insert into token_usage (id, user_id, provider, model, prompt_tokens, completion_tokens, total_tokens, estimated_cost)
-         values ($1, null, $2, $3, $4, $5, $6, 0)",
+         values ($1, null, $2, $3, $4, $5, $6, $7::numeric)",
     )
     .bind(Uuid::new_v4())
     .bind(provider)
@@ -68,6 +78,7 @@ pub async fn complete_chat(
     .bind(response.prompt_tokens as i64)
     .bind(response.completion_tokens as i64)
     .bind((response.prompt_tokens + response.completion_tokens) as i64)
+    .bind(format!("{estimated_cost:.6}"))
     .execute(&state.db)
     .await;
 
@@ -271,8 +282,11 @@ pub async fn record_estimated_stream_usage(
 
     let provider_name = provider_name.to_lowercase();
     let provider_type = provider_type.to_lowercase();
-    let is_billable = provider_name == "openai"
-        || matches!(provider_type.as_str(), "openai" | "anthropic" | "claude");
+    let is_billable = provider_name.contains("openai")
+        || matches!(
+            provider_type.as_str(),
+            "openai" | "openai_compatible" | "anthropic" | "claude"
+        );
 
     if !is_billable {
         return;
@@ -356,14 +370,38 @@ async fn estimate_cost(
     .await?;
 
     let Some((input_price, output_price)) = row else {
-        return Ok(0.0);
+        return Ok(default_model_cost(model, prompt_tokens, completion_tokens));
     };
 
-    let input_price = input_price.parse::<f64>().unwrap_or(0.0);
-    let output_price = output_price.parse::<f64>().unwrap_or(0.0);
+    let mut input_price = input_price.parse::<f64>().unwrap_or(0.0);
+    let mut output_price = output_price.parse::<f64>().unwrap_or(0.0);
+
+    if input_price == 0.0 && output_price == 0.0 {
+        if let Some((default_input, default_output)) = default_model_prices(model) {
+            input_price = default_input;
+            output_price = default_output;
+        }
+    }
 
     Ok((prompt_tokens as f64 / 1_000_000.0 * input_price)
         + (completion_tokens as f64 / 1_000_000.0 * output_price))
+}
+
+fn default_model_cost(model: &str, prompt_tokens: u32, completion_tokens: u32) -> f64 {
+    let Some((input_price, output_price)) = default_model_prices(model) else {
+        return 0.0;
+    };
+
+    (prompt_tokens as f64 / 1_000_000.0 * input_price)
+        + (completion_tokens as f64 / 1_000_000.0 * output_price)
+}
+
+fn default_model_prices(model: &str) -> Option<(f64, f64)> {
+    match model.to_lowercase().as_str() {
+        "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" => Some((0.15, 0.60)),
+        "gpt-4o" | "gpt-4o-2024-08-06" => Some((2.50, 10.00)),
+        _ => None,
+    }
 }
 
 fn estimate_tokens(text: &str) -> u32 {
