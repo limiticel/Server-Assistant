@@ -21,8 +21,13 @@ interface AiModel {
 }
 
 const theme = ref<ThemeMode>(getSavedTheme())
-const saving = ref(false)
-const saved = ref(false)
+const profileName = ref('')
+const profileEmail = ref('')
+const profileSaving = ref(false)
+const profileSaved = ref(false)
+const profileError = ref('')
+const contextSaving = ref(false)
+const contextSaved = ref(false)
 const summarySaving = ref(false)
 const summaryGenerating = ref(false)
 const summarySaved = ref(false)
@@ -65,12 +70,15 @@ const generatedToday = computed(() => {
 })
 
 onMounted(async () => {
-  const [chatContextResponse, summaryResponse, providersResponse, modelsResponse] = await Promise.all([
+  const [profileResponse, chatContextResponse, summaryResponse, providersResponse, modelsResponse] = await Promise.all([
+    http.get('/api/auth/me'),
     http.get('/api/settings/chat-context'),
     http.get('/api/settings/profile-summary'),
     http.get('/api/admin/providers'),
     http.get('/api/admin/models')
   ])
+  profileName.value = profileResponse.data.name ?? ''
+  profileEmail.value = profileResponse.data.email ?? ''
   chatContext.value = chatContextResponse.data
   profileSummary.value = normalizeProfileSummary(summaryResponse.data)
   providers.value = providersResponse.data.filter((provider: AiProvider) => provider.active)
@@ -87,13 +95,29 @@ watch(
   () => ensureProfileSummarySelection()
 )
 
-function saveProfile() {
-  applyTheme(theme.value)
+async function saveProfile() {
+  profileSaving.value = true
+  profileSaved.value = false
+  profileError.value = ''
+
+  try {
+    const { data } = await http.put('/api/auth/me', {
+      name: profileName.value.trim()
+    })
+    profileName.value = data.name ?? profileName.value
+    profileEmail.value = data.email ?? profileEmail.value
+    applyTheme(theme.value)
+    profileSaved.value = true
+  } catch (error: any) {
+    profileError.value = error?.response?.data?.error ?? 'Nao foi possivel salvar o perfil.'
+  } finally {
+    profileSaving.value = false
+  }
 }
 
 async function saveChatContext() {
-  saving.value = true
-  saved.value = false
+  contextSaving.value = true
+  contextSaved.value = false
   try {
     const { data } = await http.put('/api/settings/chat-context', {
       compaction_enabled: chatContext.value.compaction_enabled,
@@ -102,9 +126,9 @@ async function saveChatContext() {
       max_summary_chars: Number(chatContext.value.max_summary_chars)
     })
     chatContext.value = data
-    saved.value = true
+    contextSaved.value = true
   } finally {
-    saving.value = false
+    contextSaving.value = false
   }
 }
 
@@ -189,16 +213,28 @@ function normalizeProfileSummary(data: any) {
             <div class="space-y-4 p-5">
               <label class="block text-sm">
                 <span class="mb-1 block text-gray-500 dark:text-slate-400">Nome</span>
-                <input class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950" placeholder="Nome" />
+                <input v-model="profileName" class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950" placeholder="Nome" />
+              </label>
+              <label class="block text-sm">
+                <span class="mb-1 block text-gray-500 dark:text-slate-400">Email</span>
+                <input :value="profileEmail" class="w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-gray-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400" disabled />
               </label>
               <label class="block text-sm">
                 <span class="mb-1 block text-gray-500 dark:text-slate-400">Tema</span>
-                <select v-model="theme" class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950" @change="saveProfile">
+                <select v-model="theme" class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950">
                   <option value="light">Tema claro</option>
                   <option value="dark">Tema escuro</option>
                 </select>
               </label>
-              <button class="rounded-md bg-brand px-4 py-2 font-medium text-white" @click="saveProfile">Salvar perfil</button>
+              <div v-if="profileError" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                {{ profileError }}
+              </div>
+              <div class="flex items-center gap-3">
+                <button class="rounded-md bg-brand px-4 py-2 font-medium text-white disabled:opacity-50" :disabled="profileSaving" @click="saveProfile">
+                  {{ profileSaving ? 'Salvando...' : 'Salvar perfil' }}
+                </button>
+                <span v-if="profileSaved" class="text-sm text-brand">Perfil salvo.</span>
+              </div>
             </div>
           </div>
 
@@ -252,10 +288,10 @@ function normalizeProfileSummary(data: any) {
               </div>
 
               <div class="flex items-center gap-3">
-                <button class="rounded-md bg-brand px-4 py-2 font-medium text-white disabled:opacity-50" :disabled="saving" @click="saveChatContext">
-                  {{ saving ? 'Salvando...' : 'Salvar contexto' }}
+                <button class="rounded-md bg-brand px-4 py-2 font-medium text-white disabled:opacity-50" :disabled="contextSaving" @click="saveChatContext">
+                  {{ contextSaving ? 'Salvando...' : 'Salvar contexto' }}
                 </button>
-                <span v-if="saved" class="text-sm text-brand">Configuracao salva.</span>
+                <span v-if="contextSaved" class="text-sm text-brand">Configuracao salva.</span>
               </div>
             </div>
           </div>

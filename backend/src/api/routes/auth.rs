@@ -1,8 +1,17 @@
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{
+    extract::State,
+    http::HeaderMap,
+    routing::{get, post},
+    Json, Router,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{auth::issue_access_token, shared::AppError, AppState};
+use crate::{
+    auth::{issue_access_token, verify_access_token, Claims},
+    shared::AppError,
+    AppState,
+};
 
 #[derive(Deserialize)]
 struct AuthRequest {
@@ -19,10 +28,24 @@ struct AuthResponse {
     role: String,
 }
 
+#[derive(Deserialize)]
+struct ProfileUpdateRequest {
+    name: String,
+}
+
+#[derive(Serialize)]
+struct ProfileResponse {
+    id: Uuid,
+    email: String,
+    name: String,
+    role: String,
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/login", post(login))
         .route("/register", post(register))
+        .route("/me", get(me).put(update_me))
 }
 
 async fn login(
@@ -70,4 +93,63 @@ async fn register(
         user_id,
         role,
     }))
+}
+
+async fn me(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ProfileResponse>, AppError> {
+    let claims = claims_from_headers(&headers, &state)?;
+    let profile = load_profile(&state, claims.sub).await?;
+    Ok(Json(profile))
+}
+
+async fn update_me(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<ProfileUpdateRequest>,
+) -> Result<Json<ProfileResponse>, AppError> {
+    let claims = claims_from_headers(&headers, &state)?;
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Err(AppError::Validation("name is required".to_owned()));
+    }
+
+    sqlx::query("update users set name = $2, updated_at = now() where id = $1 and active = true")
+        .bind(claims.sub)
+        .bind(name)
+        .execute(&state.db)
+        .await?;
+
+    let profile = load_profile(&state, claims.sub).await?;
+    Ok(Json(profile))
+}
+
+async fn load_profile(state: &AppState, user_id: Uuid) -> Result<ProfileResponse, AppError> {
+    let row: Option<(Uuid, String, String, String)> = sqlx::query_as(
+        "select id, email, name, role
+         from users
+         where id = $1 and active = true",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    row.map(|(id, email, name, role)| ProfileResponse {
+        id,
+        email,
+        name,
+        role,
+    })
+    .ok_or(AppError::Unauthorized)
+}
+
+fn claims_from_headers(headers: &HeaderMap, state: &AppState) -> Result<Claims, AppError> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .ok_or(AppError::Unauthorized)?;
+
+    verify_access_token(token, &state.settings.jwt_secret)
 }
