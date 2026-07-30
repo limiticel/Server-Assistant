@@ -159,14 +159,14 @@ async fn generate_profile_summary(
     let messages = vec![
         ChatMessage {
             role: "system".to_owned(),
-            content: "Voce cria um resumo diario de perfil do usuario com base nas conversas recentes. Escreva em portugues do Brasil, em 1 a 3 paragrafos curtos. O resumo deve ser util para continuidade: objetivos do usuario, preferencias, decisoes recentes, pendencias e contexto importante. Nao seja longo demais e nao invente informacoes.".to_owned(),
+            content: "Voce cria um resumo diario do usuario administrador do Server Assistant. O Server Assistant e um sistema de chat com IA, providers/modelos configuraveis, ferramentas dinamicas, ferramentas de API, ferramentas de Infra, execucao de fluxos, painel administrativo, historico de conversas, perfil, configuracoes de contexto e uso de tokens. O usuario administra e testa esse sistema: cria ferramentas, configura modelos, valida fluxos, depura backend/frontend, testa APIs fake e integra recursos locais como Ollama e SSH. O resumo NAO deve ser um resumo de um chat especifico; deve consolidar o estado operacional do usuario no sistema como um todo. Escreva em portugues do Brasil, em 1 a 3 paragrafos curtos. Inclua objetivos recorrentes, decisoes recentes, preferencias de uso, pendencias tecnicas e contexto importante para continuar ajudando esse administrador. Nao seja longo demais e nao invente informacoes.".to_owned(),
             name: None,
             tool_call_id: None,
             tool_calls: None,
         },
         ChatMessage {
             role: "user".to_owned(),
-            content: format!("Gere o resumo diario do usuario com base neste historico recente:\n\n{transcript}"),
+            content: format!("Gere o resumo diario do administrador do Server Assistant a partir do historico recente abaixo. Considere o historico como sinais sobre o trabalho do usuario no sistema inteiro, nao como uma conversa isolada:\n\n{transcript}"),
             name: None,
             tool_call_id: None,
             tool_calls: None,
