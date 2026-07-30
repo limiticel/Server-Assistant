@@ -4,7 +4,7 @@ insert into users (email, name, password_hash, role, active)
 values (
   'richard.vaz@grupo3rn.com.br',
   'Richard Vaz',
-  '$1$saadmin2$5snl34AHLAPYgnZRFaquO.',
+  '$2a$06$JVxU1a/0mgaMA6mKHWPiO.vs7lT6zUfvNTu9ZtqDyM.duhyrW/VUi',
   'admin',
   true
 )
