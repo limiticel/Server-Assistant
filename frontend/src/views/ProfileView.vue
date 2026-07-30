@@ -173,159 +173,185 @@ function normalizeProfileSummary(data: any) {
 
 <template>
   <AppShell>
-    <section class="space-y-6 p-6">
-      <h1 class="mb-4 text-2xl font-semibold">Perfil</h1>
-      <div class="max-w-xl space-y-3 rounded-lg bg-white p-5 shadow-sm dark:bg-slate-900">
-        <input class="w-full rounded-md border border-gray-300 px-3 py-2" placeholder="Nome" />
-        <select v-model="theme" class="w-full rounded-md border border-gray-300 px-3 py-2" @change="saveProfile">
-          <option value="light">Tema claro</option>
-          <option value="dark">Tema escuro</option>
-        </select>
-        <button class="rounded-md bg-brand px-4 py-2 font-medium text-white" @click="saveProfile">Salvar</button>
+    <section class="mx-auto max-w-7xl space-y-6 p-6">
+      <div>
+        <h1 class="text-2xl font-semibold">Perfil</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-slate-400">Preferencias pessoais, memoria diaria e contexto enviado para a IA.</p>
       </div>
 
-      <div class="max-w-xl space-y-4 rounded-lg bg-white p-5 shadow-sm dark:bg-slate-900">
-        <div class="flex items-start gap-3">
-          <div class="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-brand text-white">
-            <Brain class="h-5 w-5" />
-          </div>
-          <div class="min-w-0">
-            <h2 class="text-lg font-semibold">Resumo diario do usuario</h2>
-            <p class="mt-1 text-sm text-gray-500 dark:text-slate-400">
-              Uma IA escolhida por voce resume o contexto recente uma vez por dia.
-            </p>
-          </div>
-        </div>
-
-        <label class="flex items-center gap-3 rounded-md border border-gray-200 p-3 text-sm dark:border-slate-700">
-          <input v-model="profileSummary.settings.enabled" type="checkbox" class="h-4 w-4 accent-brand" />
-          Ativar resumo diario
-        </label>
-
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="block text-sm">
-            <span class="mb-1 block text-gray-500 dark:text-slate-400">Provider</span>
-            <select
-              v-model="profileSummary.settings.provider"
-              class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
-            >
-              <option v-for="provider in providers" :key="provider.id" :value="provider.id">
-                {{ provider.name }}
-              </option>
-            </select>
-          </label>
-
-          <label class="block text-sm">
-            <span class="mb-1 block text-gray-500 dark:text-slate-400">Modelo</span>
-            <select
-              v-model="profileSummary.settings.model"
-              class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
-            >
-              <option v-for="model in modelsForSummaryProvider" :key="model.id" :value="model.name">
-                {{ model.name }}
-              </option>
-            </select>
-          </label>
-        </div>
-
-        <div class="rounded-md border border-gray-200 p-4 dark:border-slate-700">
-          <div class="mb-3 flex items-center justify-between gap-3">
-            <div class="flex min-w-0 items-center gap-2 text-sm text-gray-500 dark:text-slate-400">
-              <CalendarClock class="h-4 w-4 shrink-0" />
-              <span>{{ generatedAtLabel }}</span>
+      <div class="grid items-start gap-6 xl:grid-cols-[minmax(360px,480px)_minmax(520px,1fr)]">
+        <div class="space-y-6">
+          <div class="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div class="border-b border-gray-100 px-5 py-4 dark:border-slate-800">
+              <h2 class="text-lg font-semibold">Conta</h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-slate-400">Dados basicos e aparencia do sistema.</p>
             </div>
-            <span
-              class="rounded-full px-2 py-1 text-xs font-semibold"
-              :class="generatedToday ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300'"
-            >
-              {{ generatedToday ? 'Resumo de hoje' : 'Pendente hoje' }}
-            </span>
+            <div class="space-y-4 p-5">
+              <label class="block text-sm">
+                <span class="mb-1 block text-gray-500 dark:text-slate-400">Nome</span>
+                <input class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950" placeholder="Nome" />
+              </label>
+              <label class="block text-sm">
+                <span class="mb-1 block text-gray-500 dark:text-slate-400">Tema</span>
+                <select v-model="theme" class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950" @change="saveProfile">
+                  <option value="light">Tema claro</option>
+                  <option value="dark">Tema escuro</option>
+                </select>
+              </label>
+              <button class="rounded-md bg-brand px-4 py-2 font-medium text-white" @click="saveProfile">Salvar perfil</button>
+            </div>
           </div>
-          <p v-if="profileSummary.summary" class="whitespace-pre-line text-sm leading-6 text-gray-700 dark:text-slate-200">
-            {{ profileSummary.summary }}
-          </p>
-          <p v-else class="text-sm text-gray-500 dark:text-slate-400">
-            Nenhum resumo gerado ainda.
-          </p>
+
+          <div class="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div class="border-b border-gray-100 px-5 py-4 dark:border-slate-800">
+              <h2 class="text-lg font-semibold">Contexto do chat</h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-slate-400">
+                Compacta mensagens antigas mantendo as recentes completas.
+              </p>
+            </div>
+            <div class="space-y-4 p-5">
+              <label class="flex items-center justify-between gap-4 rounded-md border border-gray-200 p-3 text-sm dark:border-slate-700">
+                <span>Ativar compactador de conversa</span>
+                <input v-model="chatContext.compaction_enabled" type="checkbox" class="h-4 w-4 accent-brand" />
+              </label>
+
+              <div class="grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
+                <label class="block text-sm">
+                  <span class="mb-1 block text-gray-500 dark:text-slate-400">Limite</span>
+                  <input
+                    v-model.number="chatContext.max_messages"
+                    type="number"
+                    min="4"
+                    max="200"
+                    class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
+                  />
+                </label>
+
+                <label class="block text-sm">
+                  <span class="mb-1 block text-gray-500 dark:text-slate-400">Recentes</span>
+                  <input
+                    v-model.number="chatContext.keep_last_messages"
+                    type="number"
+                    min="2"
+                    :max="chatContext.max_messages"
+                    class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
+                  />
+                </label>
+
+                <label class="block text-sm">
+                  <span class="mb-1 block text-gray-500 dark:text-slate-400">Resumo max.</span>
+                  <input
+                    v-model.number="chatContext.max_summary_chars"
+                    type="number"
+                    min="500"
+                    max="20000"
+                    step="500"
+                    class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
+                  />
+                </label>
+              </div>
+
+              <div class="flex items-center gap-3">
+                <button class="rounded-md bg-brand px-4 py-2 font-medium text-white disabled:opacity-50" :disabled="saving" @click="saveChatContext">
+                  {{ saving ? 'Salvando...' : 'Salvar contexto' }}
+                </button>
+                <span v-if="saved" class="text-sm text-brand">Configuracao salva.</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div v-if="summaryError" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
-          {{ summaryError }}
-        </div>
+        <div class="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div class="flex items-start gap-3 border-b border-gray-100 px-5 py-4 dark:border-slate-800">
+            <div class="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-brand text-white">
+              <Brain class="h-5 w-5" />
+            </div>
+            <div class="min-w-0">
+              <h2 class="text-lg font-semibold">Resumo diario do usuario</h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-slate-400">
+                Uma IA escolhida por voce resume o contexto recente uma vez por dia.
+              </p>
+            </div>
+          </div>
+          <div class="space-y-5 p-5">
+            <div class="grid gap-4 lg:grid-cols-[220px_1fr]">
+              <label class="flex items-center justify-between gap-4 rounded-md border border-gray-200 p-3 text-sm dark:border-slate-700">
+                <span>Ativar resumo diario</span>
+                <input v-model="profileSummary.settings.enabled" type="checkbox" class="h-4 w-4 accent-brand" />
+              </label>
 
-        <div class="flex flex-wrap items-center gap-3">
-          <button
-            class="inline-flex items-center gap-2 rounded-md bg-brand px-4 py-2 font-medium text-white disabled:opacity-50"
-            :disabled="summarySaving || summaryGenerating"
-            @click="saveProfileSummarySettings"
-          >
-            <Save class="h-4 w-4" />
-            {{ summarySaving ? 'Salvando...' : 'Salvar IA' }}
-          </button>
-          <button
-            class="inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
-            :disabled="summaryGenerating || !profileSummary.settings.provider || !profileSummary.settings.model"
-            @click="generateProfileSummary"
-          >
-            <RefreshCw class="h-4 w-4" :class="summaryGenerating ? 'animate-spin' : ''" />
-            {{ summaryGenerating ? 'Gerando...' : 'Gerar resumo do dia' }}
-          </button>
-          <span v-if="summarySaved" class="text-sm text-brand">Configuracao salva.</span>
-        </div>
-      </div>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <label class="block text-sm">
+                  <span class="mb-1 block text-gray-500 dark:text-slate-400">Provider</span>
+                  <select
+                    v-model="profileSummary.settings.provider"
+                    class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
+                  >
+                    <option v-for="provider in providers" :key="provider.id" :value="provider.id">
+                      {{ provider.name }}
+                    </option>
+                  </select>
+                </label>
 
-      <div class="max-w-xl space-y-4 rounded-lg bg-white p-5 shadow-sm dark:bg-slate-900">
-        <div>
-          <h2 class="text-lg font-semibold">Contexto do chat</h2>
-          <p class="mt-1 text-sm text-gray-500 dark:text-slate-400">
-            Compacta mensagens antigas antes de enviar para a IA, mantendo as mensagens recentes completas.
-          </p>
-        </div>
+                <label class="block text-sm">
+                  <span class="mb-1 block text-gray-500 dark:text-slate-400">Modelo</span>
+                  <select
+                    v-model="profileSummary.settings.model"
+                    class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
+                  >
+                    <option v-for="model in modelsForSummaryProvider" :key="model.id" :value="model.name">
+                      {{ model.name }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+            </div>
 
-        <label class="flex items-center gap-3 rounded-md border border-gray-200 p-3 text-sm dark:border-slate-700">
-          <input v-model="chatContext.compaction_enabled" type="checkbox" class="h-4 w-4 accent-brand" />
-          Ativar compactador de conversa
-        </label>
+            <div class="rounded-md border border-gray-200 bg-gray-50 p-4 dark:border-slate-700 dark:bg-slate-950/50">
+              <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex min-w-0 items-center gap-2 text-sm text-gray-500 dark:text-slate-400">
+                  <CalendarClock class="h-4 w-4 shrink-0" />
+                  <span>{{ generatedAtLabel }}</span>
+                </div>
+                <span
+                  class="rounded-full px-2 py-1 text-xs font-semibold"
+                  :class="generatedToday ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-gray-200 text-gray-600 dark:bg-slate-800 dark:text-slate-300'"
+                >
+                  {{ generatedToday ? 'Resumo de hoje' : 'Pendente hoje' }}
+                </span>
+              </div>
+              <p v-if="profileSummary.summary" class="whitespace-pre-line text-sm leading-6 text-gray-700 dark:text-slate-200">
+                {{ profileSummary.summary }}
+              </p>
+              <p v-else class="text-sm text-gray-500 dark:text-slate-400">
+                Nenhum resumo gerado ainda.
+              </p>
+            </div>
 
-        <label class="block text-sm">
-          <span class="mb-1 block text-gray-500 dark:text-slate-400">Limite maximo de mensagens antes de compactar</span>
-          <input
-            v-model.number="chatContext.max_messages"
-            type="number"
-            min="4"
-            max="200"
-            class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
-          />
-        </label>
+            <div v-if="summaryError" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+              {{ summaryError }}
+            </div>
 
-        <label class="block text-sm">
-          <span class="mb-1 block text-gray-500 dark:text-slate-400">Mensagens recentes mantidas completas</span>
-          <input
-            v-model.number="chatContext.keep_last_messages"
-            type="number"
-            min="2"
-            :max="chatContext.max_messages"
-            class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
-          />
-        </label>
-
-        <label class="block text-sm">
-          <span class="mb-1 block text-gray-500 dark:text-slate-400">Tamanho maximo do resumo compacto</span>
-          <input
-            v-model.number="chatContext.max_summary_chars"
-            type="number"
-            min="500"
-            max="20000"
-            step="500"
-            class="w-full rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
-          />
-        </label>
-
-        <div class="flex items-center gap-3">
-          <button class="rounded-md bg-brand px-4 py-2 font-medium text-white disabled:opacity-50" :disabled="saving" @click="saveChatContext">
-            {{ saving ? 'Salvando...' : 'Salvar contexto' }}
-          </button>
-          <span v-if="saved" class="text-sm text-brand">Configuração salva.</span>
+            <div class="flex flex-wrap items-center gap-3">
+              <button
+                class="inline-flex items-center gap-2 rounded-md bg-brand px-4 py-2 font-medium text-white disabled:opacity-50"
+                :disabled="summarySaving || summaryGenerating"
+                @click="saveProfileSummarySettings"
+              >
+                <Save class="h-4 w-4" />
+                {{ summarySaving ? 'Salvando...' : 'Salvar IA' }}
+              </button>
+              <button
+                class="inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+                :disabled="summaryGenerating || !profileSummary.settings.provider || !profileSummary.settings.model"
+                @click="generateProfileSummary"
+              >
+                <RefreshCw class="h-4 w-4" :class="summaryGenerating ? 'animate-spin' : ''" />
+                {{ summaryGenerating ? 'Gerando...' : 'Gerar resumo do dia' }}
+              </button>
+              <span v-if="summarySaved" class="text-sm text-brand">Configuracao salva.</span>
+            </div>
+          </div>
         </div>
       </div>
     </section>
