@@ -13,3 +13,16 @@ http.interceptors.request.use((config) => {
   return config
 })
 
+http.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401 && window.location.pathname !== '/login') {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('refresh_token')
+      localStorage.removeItem('role')
+      window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)
+    }
+
+    return Promise.reject(error)
+  }
+)

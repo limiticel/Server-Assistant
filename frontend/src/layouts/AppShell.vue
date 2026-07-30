@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { BarChart3, Bot, KeyRound, Menu, MessageSquare, PanelLeftClose, Settings, UserRound, Wrench } from '@lucide/vue'
+import { BarChart3, Bot, KeyRound, LogOut, Menu, MessageSquare, PanelLeftClose, Settings, UserRound, Wrench } from '@lucide/vue'
 import { ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
 
 defineProps<{
   fixed?: boolean
@@ -8,17 +10,24 @@ defineProps<{
 
 const storageKey = 'server-assistant-main-sidebar-collapsed'
 const isCollapsed = ref(localStorage.getItem(storageKey) === 'true')
+const auth = useAuthStore()
+const router = useRouter()
 
 watch(isCollapsed, (value) => {
   localStorage.setItem(storageKey, String(value))
 })
+
+async function logout() {
+  auth.logout()
+  await router.push('/login')
+}
 </script>
 
 <template>
   <div
     class="grid bg-mist text-ink transition-[grid-template-columns] duration-200 dark:bg-slate-950 dark:text-slate-100"
     :class="[
-      isCollapsed ? 'grid-cols-[64px_1fr]' : 'grid-cols-[280px_1fr]',
+      isCollapsed ? 'grid-cols-[64px_1fr]' : 'grid-cols-[220px_1fr] lg:grid-cols-[280px_1fr]',
       fixed ? 'h-full min-h-0 overflow-hidden' : 'min-h-full'
     ]"
   >
@@ -44,6 +53,15 @@ watch(isCollapsed, (value) => {
         <RouterLink class="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-gray-100 dark:hover:bg-slate-800" :class="isCollapsed ? 'justify-center' : ''" title="Modelos" to="/admin/models"><Settings class="h-4 w-4 shrink-0" /><span v-if="!isCollapsed">Modelos</span></RouterLink>
         <RouterLink class="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-gray-100 dark:hover:bg-slate-800" :class="isCollapsed ? 'justify-center' : ''" title="MCP" to="/admin/mcp-tools"><Wrench class="h-4 w-4 shrink-0" /><span v-if="!isCollapsed">MCP</span></RouterLink>
         <RouterLink class="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-gray-100 dark:hover:bg-slate-800" :class="isCollapsed ? 'justify-center' : ''" title="Perfil" to="/profile"><UserRound class="h-4 w-4 shrink-0" /><span v-if="!isCollapsed">Perfil</span></RouterLink>
+        <button
+          class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-gray-600 hover:bg-gray-100 hover:text-red-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-red-300"
+          :class="isCollapsed ? 'justify-center' : ''"
+          title="Sair"
+          @click="logout"
+        >
+          <LogOut class="h-4 w-4 shrink-0" />
+          <span v-if="!isCollapsed">Sair</span>
+        </button>
       </nav>
     </aside>
     <main class="min-w-0" :class="fixed ? 'min-h-0 overflow-hidden' : ''">
