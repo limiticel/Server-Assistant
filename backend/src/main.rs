@@ -20,7 +20,6 @@ pub struct AppState {
     pub settings: Settings,
     pub db: sqlx::PgPool,
     pub providers: ProviderRegistry,
-    pub orchestrator: infrastructure::mcp::OrchestratorClient,
 }
 
 #[tokio::main]
@@ -33,16 +32,11 @@ async fn main() -> anyhow::Result<()> {
 
     let db = connect_pool(&settings.database_url).await?;
     let providers = ProviderRegistry::from_settings(&settings);
-    let orchestrator = infrastructure::mcp::OrchestratorClient::new(
-        settings.mcp_orchestrator_url.clone(),
-        settings.mcp_orchestrator_api_key.clone(),
-    );
 
     let state = AppState {
         settings: settings.clone(),
         db,
         providers,
-        orchestrator,
     };
 
     let app = router::build(state);

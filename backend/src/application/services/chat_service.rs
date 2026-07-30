@@ -2,9 +2,11 @@ use async_stream::stream;
 use futures::stream::BoxStream;
 use serde_json::Value;
 use sqlx::PgPool;
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::{
+    application::services::dynamic_tools,
     domain::ai::{
         AiProvider, ChatMessage, ChatRequest, ChatResponse, ChatStream, ChatTool, ChatToolCall,
         ChatToolFunction,
@@ -14,7 +16,7 @@ use crate::{
     AppState,
 };
 
-const TOOL_SYSTEM_PROMPT: &str = "Voce tem acesso a ferramentas reais deste sistema. Use ferramentas quando elas ajudarem a responder com dados reais, buscar informacoes atuais ou executar uma acao solicitada. Se o usuario pedir para voce tentar, executar, rodar, testar, verificar, diagnosticar, conectar ou administrar o servidor, chame ubuntu_server_ssh. Quando o usuario enviar um comando de terminal e pedir para voce tentar, execute esse comando pela ferramenta, sem apenas explicar. Se o usuario pedir busca, pesquisa, site oficial, noticia ou informacao atual da internet, chame web_search. Se o usuario pedir banco de dados, PostgreSQL, schema, tabelas ou consultas SQL, prefira postgres_query. O banco deste projeto e PostgreSQL; nao use mysql salvo se o usuario pedir MySQL explicitamente. Nunca use comandos interativos como psql sem -c, sudo -i, sudo su ou sudo que exige terminal. Para PostgreSQL, use postgres_query ou comandos psql nao-interativos. Para status de servicos, prefira comandos sem sudo como systemctl is-active postgresql, systemctl status postgresql --no-pager ou service postgresql status. Nao diga que nao tem capacidade de acessar sistemas externos quando uma ferramenta adequada estiver disponivel. Para comandos de servidor, prefira comandos somente leitura quando o usuario pedir diagnostico.";
+const TOOL_SYSTEM_PROMPT: &str = "Voce esta em um ambiente com ferramentas reais criadas neste sistema. Quando uma ferramenta estiver disponivel, voce pode chama-la para buscar dados atuais, testar conexoes, executar acoes ou consultar sistemas. Nao diga que nao tem acesso a ferramentas, servidores ou sistemas externos quando uma ferramenta adequada estiver disponivel. Para ferramentas de Infra, use os parametros esperados da propria ferramenta. Se dados como host, port, username, password ou private_key_path ja estiverem configurados como defaults da ferramenta, nao peca novamente ao usuario e nao tente reescrever esses valores. Se precisar testar conexao com servidor, chame a ferramenta com runtime ssh e um comando seguro de teste, como hostname. Nunca junte host e porta no mesmo campo: use host somente para o endereco, por exemplo 127.0.0.1, e port somente para a porta, por exemplo 2222. A porta pode aparecer como string ou numero, mas deve ser enviada no parametro port. Quando o usuario pedir busca, pesquisa, site oficial, noticia ou informacao atual da internet, use web_search se ela estiver disponivel. Se o usuario pedir banco de dados, PostgreSQL, schema, tabelas ou consultas SQL, prefira postgres_query quando ela estiver disponivel. O banco deste projeto e PostgreSQL; nao use mysql salvo se o usuario pedir MySQL explicitamente. Se depois de uma ferramenta ainda houver uma acao pendente, chame outra ferramenta imediatamente; nao diga 'vou iniciar', 'vou verificar' ou 'um momento' sem executar a proxima ferramenta.";
 
 pub type AgentStream = BoxStream<'static, Result<AgentEvent, AppError>>;
 
@@ -105,6 +107,42 @@ pub async fn agent_stream_with_model_tools(
     prepend_model_persona(&state, &provider, &model, &mut messages).await?;
 
     if tools.is_empty() {
+        return Ok(Box::pin(stream! {
+            yield Ok(AgentEvent::Status("Respondendo sem ferramentas atribuidas ao modelo.".to_owned()));
+            yield Ok(AgentEvent::Status(format!("Conectando ao provider {provider} com o modelo {model}.")));
+            let started_at = Instant::now();
+            let mut upstream = match stream_chat(&state, &provider, &model, messages).await {
+                Ok(upstream) => upstream,
+                Err(err) => {
+                    yield Err(err);
+                    return;
+                }
+            };
+            yield Ok(AgentEvent::Status(format!(
+                "Provider conectado em {:.1}s. Aguardando tokens.",
+                started_at.elapsed().as_secs_f32()
+            )));
+            let first_token_started_at = Instant::now();
+            let mut saw_delta = false;
+            while let Some(item) = futures::StreamExt::next(&mut upstream).await {
+                match item {
+                    Ok(delta) => {
+                        if !saw_delta {
+                            saw_delta = true;
+                            yield Ok(AgentEvent::Status(format!(
+                                "Primeiro token recebido em {:.1}s.",
+                                first_token_started_at.elapsed().as_secs_f32()
+                            )));
+                        }
+                        yield Ok(AgentEvent::Delta(delta));
+                    }
+                    Err(err) => yield Err(err),
+                }
+            }
+        }));
+    }
+
+    if tools.is_empty() {
         let mut upstream = stream_chat(&state, &provider, &model, messages).await?;
         return Ok(Box::pin(stream! {
             yield Ok(AgentEvent::Status("Respondendo sem ferramentas atribuídas ao modelo.".to_owned()));
@@ -138,75 +176,84 @@ pub async fn agent_stream_with_model_tools(
             yield Ok(AgentEvent::Status("A solicitacao parece pedir uma acao externa; vou forcar o uso de uma ferramenta.".to_owned()));
         }
 
-        let decision = match complete_chat_with_tools(&state, &provider, &model, messages.clone(), tools, should_require_tool).await {
-            Ok(decision) => decision,
-            Err(err) => {
-                yield Err(err);
-                return;
-            }
-        };
-
-        if decision.tool_calls.is_empty() {
-            if !decision.content.is_empty() {
-                yield Ok(AgentEvent::Status("O modelo decidiu responder sem chamar ferramentas.".to_owned()));
-                yield Ok(AgentEvent::Delta(decision.content));
-            }
-            return;
-        }
-
-        messages.push(ChatMessage {
-            role: "assistant".to_owned(),
-            content: decision.content,
-            name: None,
-            tool_call_id: None,
-            tool_calls: Some(decision.tool_calls.clone()),
-        });
-
-        for call in decision.tool_calls {
-            let arguments = serde_json::from_str::<Value>(&call.function.arguments).unwrap_or_else(|_| Value::String(call.function.arguments.clone()));
-            yield Ok(AgentEvent::ToolStart {
-                name: call.function.name.clone(),
-                arguments,
-            });
-
-            let result = match call_model_tool(&state, &call).await {
-                Ok(result) => result,
+        let max_tool_rounds = 5;
+        for round in 1..=max_tool_rounds {
+            yield Ok(AgentEvent::Status(format!("Rodada {round}/{max_tool_rounds}: chamando {provider}/{model} para decidir o proximo passo.")));
+            let decision_started_at = Instant::now();
+            let require_tool = round == 1 && should_require_tool;
+            let decision = match complete_chat_with_tools(&state, &provider, &model, messages.clone(), tools.clone(), require_tool).await {
+                Ok(decision) => decision,
                 Err(err) => {
                     yield Err(err);
                     return;
                 }
             };
+            yield Ok(AgentEvent::Status(format!(
+                "Decisao do modelo recebida em {:.1}s.",
+                decision_started_at.elapsed().as_secs_f32()
+            )));
 
-            yield Ok(AgentEvent::ToolResult {
-                name: call.function.name.clone(),
-                result: result.clone(),
-            });
+            if decision.tool_calls.is_empty() {
+                if !decision.content.is_empty() {
+                    yield Ok(AgentEvent::Status("Resposta final pronta.".to_owned()));
+                    yield Ok(AgentEvent::Delta(decision.content));
+                }
+                return;
+            }
 
             messages.push(ChatMessage {
-                role: "tool".to_owned(),
-                content: result.to_string(),
-                name: Some(call.function.name),
-                tool_call_id: Some(call.id),
-                tool_calls: None,
+                role: "assistant".to_owned(),
+                content: decision.content,
+                name: None,
+                tool_call_id: None,
+                tool_calls: Some(decision.tool_calls.clone()),
             });
+
+            for call in decision.tool_calls {
+                let arguments = serde_json::from_str::<Value>(&call.function.arguments).unwrap_or_else(|_| Value::String(call.function.arguments.clone()));
+                yield Ok(AgentEvent::ToolStart {
+                    name: call.function.name.clone(),
+                    arguments,
+                });
+
+                let tool_started_at = Instant::now();
+                let result = match call_model_tool(&state, &call).await {
+                    Ok(result) => result,
+                    Err(err) => {
+                        yield Err(err);
+                        return;
+                    }
+                };
+
+                yield Ok(AgentEvent::ToolResult {
+                    name: call.function.name.clone(),
+                    result: result.clone(),
+                });
+                yield Ok(AgentEvent::Status(format!(
+                    "Tool {} finalizada em {:.1}s.",
+                    call.function.name,
+                    tool_started_at.elapsed().as_secs_f32()
+                )));
+
+                messages.push(ChatMessage {
+                    role: "tool".to_owned(),
+                    content: result.to_string(),
+                    name: Some(call.function.name),
+                    tool_call_id: Some(call.id),
+                    tool_calls: None,
+                });
+            }
         }
 
-        yield Ok(AgentEvent::Status("Gerando resposta final com base no resultado das ferramentas.".to_owned()));
-
-        let mut upstream = match stream_chat(&state, &provider, &model, messages).await {
-            Ok(upstream) => upstream,
+        yield Ok(AgentEvent::Status("Limite de rodadas de ferramentas atingido. Gerando resumo do estado atual.".to_owned()));
+        let response = match complete_chat(&state, &provider, &model, messages).await {
+            Ok(response) => response,
             Err(err) => {
                 yield Err(err);
                 return;
             }
         };
-
-        while let Some(item) = futures::StreamExt::next(&mut upstream).await {
-            match item {
-                Ok(delta) => yield Ok(AgentEvent::Delta(delta)),
-                Err(err) => yield Err(err),
-            }
-        }
+        yield Ok(AgentEvent::Delta(response.content));
     }))
 }
 
@@ -453,7 +500,7 @@ async fn load_tools_for_model(
             function: ChatToolFunction {
                 name,
                 description,
-                parameters,
+                parameters: dynamic_tools::schema_for_model(&parameters),
             },
         })
         .collect())
@@ -586,10 +633,7 @@ async fn call_model_tool(state: &AppState, call: &ChatToolCall) -> Result<Value,
     let mut arguments = serde_json::from_str::<Value>(&call.function.arguments)
         .map_err(|err| AppError::Validation(format!("invalid tool arguments: {err}")))?;
     merge_tool_config_arguments(state, &call.function.name, &mut arguments).await?;
-    state
-        .orchestrator
-        .call_tool(&call.function.name, arguments)
-        .await
+    dynamic_tools::call_tool(&state.db, &call.function.name, arguments).await
 }
 
 async fn merge_tool_config_arguments(

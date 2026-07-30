@@ -16,8 +16,6 @@ pub struct Settings {
     pub gemini_api_key: Option<String>,
     pub deepseek_api_key: Option<String>,
     pub ollama_base_url: String,
-    pub mcp_orchestrator_url: String,
-    pub mcp_orchestrator_api_key: Option<String>,
     pub rust_log: String,
 }
 
@@ -26,14 +24,14 @@ impl Settings {
         Ok(Self {
             app_env: env_or("APP_ENV", "development"),
             app_host: env_or("APP_HOST", "0.0.0.0"),
-            app_port: env_or("APP_PORT", "8080")
+            app_port: env_or("APP_PORT", "48118")
                 .parse()
                 .context("APP_PORT invalid")?,
             database_url: env::var("DATABASE_URL").context("DATABASE_URL is required")?,
             jwt_secret: env::var("JWT_SECRET").context("JWT_SECRET is required")?,
             jwt_refresh_secret: env::var("JWT_REFRESH_SECRET")
                 .context("JWT_REFRESH_SECRET is required")?,
-            cors_origins: env_or("CORS_ORIGINS", "http://localhost:5173")
+            cors_origins: env_or("CORS_ORIGINS", "http://localhost:48117")
                 .split(',')
                 .map(|value| value.trim().to_owned())
                 .filter(|value| !value.is_empty())
@@ -43,8 +41,6 @@ impl Settings {
             gemini_api_key: optional_env("GEMINI_API_KEY"),
             deepseek_api_key: optional_env("DEEPSEEK_API_KEY"),
             ollama_base_url: env_or("OLLAMA_BASE_URL", "http://localhost:11434"),
-            mcp_orchestrator_url: env_or("MCP_ORCHESTRATOR_URL", "http://localhost:8016"),
-            mcp_orchestrator_api_key: optional_env("MCP_ORCHESTRATOR_API_KEY"),
             rust_log: env_or("RUST_LOG", "info"),
         })
     }

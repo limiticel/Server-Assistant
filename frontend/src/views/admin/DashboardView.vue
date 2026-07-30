@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { AlertTriangle } from '@lucide/vue'
+import { AlertTriangle, BarChart3, Bot, Database, MessageSquareText, RefreshCw, Search, Users } from '@lucide/vue'
 import AppShell from '../../layouts/AppShell.vue'
 import { http } from '../../api/http'
+
+interface ProviderUsage {
+  provider: string
+  provider_type: string
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  estimated_cost: string
+}
 
 interface DashboardStats {
   general?: {
@@ -16,107 +25,205 @@ interface DashboardStats {
     completion_tokens: number
     total_tokens: number
     estimated_cost: string
-    by_provider: Array<{
-      provider: string
-      provider_type: string
-      prompt_tokens: number
-      completion_tokens: number
-      total_tokens: number
-      estimated_cost: string
-    }>
+    by_provider: ProviderUsage[]
   }
 }
 
 const stats = ref<DashboardStats>({})
+const loading = ref(false)
+const error = ref('')
+const activeView = ref<'overview' | 'providers'>('overview')
+const providerFilter = ref('')
+
+const providerRows = computed(() => stats.value.billable_usage?.by_provider ?? [])
+const maxProviderTokens = computed(() => Math.max(...providerRows.value.map((row) => row.total_tokens), 1))
+const filteredProviders = computed(() => {
+  const filter = providerFilter.value.trim().toLowerCase()
+  if (!filter) return providerRows.value
+  return providerRows.value.filter((row) => `${row.provider} ${row.provider_type}`.toLowerCase().includes(filter))
+})
+
 const generalCards = computed(() => [
-  { label: 'Usuários', value: stats.value.general?.users ?? 0 },
-  { label: 'Conversas', value: stats.value.general?.conversations ?? 0 },
-  { label: 'Mensagens', value: stats.value.general?.messages ?? 0 }
+  { label: 'Usuarios', value: stats.value.general?.users ?? 0, icon: Users, tone: 'text-cyan-300', hint: 'Contas cadastradas' },
+  { label: 'Conversas', value: stats.value.general?.conversations ?? 0, icon: MessageSquareText, tone: 'text-emerald-300', hint: 'Historico criado' },
+  { label: 'Mensagens', value: stats.value.general?.messages ?? 0, icon: Bot, tone: 'text-amber-300', hint: 'Entradas e respostas' }
 ])
 
 const billableCards = computed(() => [
-  { label: 'Prompt tokens', value: stats.value.billable_usage?.prompt_tokens ?? 0 },
-  { label: 'Completion tokens', value: stats.value.billable_usage?.completion_tokens ?? 0 },
-  { label: 'Total tokens', value: stats.value.billable_usage?.total_tokens ?? 0 },
-  { label: 'Custo estimado', value: `$${stats.value.billable_usage?.estimated_cost ?? '0'}` }
+  { label: 'Prompt', value: stats.value.billable_usage?.prompt_tokens ?? 0, hint: 'Tokens enviados' },
+  { label: 'Completion', value: stats.value.billable_usage?.completion_tokens ?? 0, hint: 'Tokens gerados' },
+  { label: 'Total', value: stats.value.billable_usage?.total_tokens ?? 0, hint: 'Prompt + completion' },
+  { label: 'Custo', value: formatCurrency(stats.value.billable_usage?.estimated_cost ?? '0'), hint: 'Estimativa atual' }
 ])
 
-onMounted(async () => {
-  const { data } = await http.get('/api/admin/dashboard')
-  stats.value = data
-})
+const totalTokens = computed(() => stats.value.billable_usage?.total_tokens ?? 0)
+const promptShare = computed(() => percent(stats.value.billable_usage?.prompt_tokens ?? 0, totalTokens.value))
+const completionShare = computed(() => percent(stats.value.billable_usage?.completion_tokens ?? 0, totalTokens.value))
+
+async function load() {
+  loading.value = true
+  error.value = ''
+  try {
+    const { data } = await http.get('/api/admin/dashboard')
+    stats.value = data
+  } catch (err: any) {
+    error.value = err?.response?.data?.error ?? err.message ?? 'Nao foi possivel carregar o dashboard.'
+  } finally {
+    loading.value = false
+  }
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat('pt-BR').format(value)
+}
+
+function formatCurrency(value: string | number) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '$0.000000'
+  return `$${numeric.toFixed(6)}`
+}
+
+function percent(value: number, total: number) {
+  if (!total) return 0
+  return Math.round((value / total) * 100)
+}
+
+function providerWidth(value: number) {
+  return `${Math.max(4, Math.round((value / maxProviderTokens.value) * 100))}%`
+}
+
+onMounted(load)
 </script>
 
 <template>
   <AppShell>
     <section class="p-6">
-      <h1 class="mb-5 text-2xl font-semibold">Dashboard</h1>
-
-      <div class="mb-5 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
-        <AlertTriangle class="mt-0.5 h-5 w-5 shrink-0" />
-        <p class="text-sm leading-6">
-          As métricas de tokens e custo estimado contabilizam somente APIs OpenAI e Claude/Anthropic.
-          Providers locais ou compatíveis, como Ollama e outros, aparecem no uso geral, mas ainda não entram no cálculo financeiro.
-        </p>
+      <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 class="text-2xl font-semibold">Dashboard</h1>
+          <p class="mt-1 text-sm text-gray-500">Uso, tokens e providers em operacao.</p>
+        </div>
+        <button class="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800" :disabled="loading" @click="load">
+          <RefreshCw class="h-4 w-4" :class="loading ? 'animate-spin' : ''" />
+          Atualizar
+        </button>
       </div>
 
-      <div class="mb-6">
-        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Uso geral</h2>
-        <div class="grid grid-cols-3 gap-4">
-          <div v-for="card in generalCards" :key="card.label" class="rounded-lg bg-white p-4 shadow-sm">
-            <div class="text-sm text-gray-500">{{ card.label }}</div>
-            <div class="mt-2 text-2xl font-semibold">{{ card.value }}</div>
+      <div v-if="error" class="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+        {{ error }}
+      </div>
+
+      <div class="mb-6 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div class="mb-5 flex items-center justify-between gap-3">
+            <div>
+              <div class="text-xs font-semibold uppercase text-gray-500">Uso geral</div>
+              <div class="mt-1 text-sm text-gray-500">Movimento registrado na plataforma.</div>
+            </div>
+            <Database class="h-5 w-5 text-brand" />
+          </div>
+          <div class="grid gap-3 sm:grid-cols-3">
+            <div v-for="card in generalCards" :key="card.label" class="rounded-md border border-gray-200 bg-gray-50 p-4 dark:border-slate-800 dark:bg-slate-950">
+              <component :is="card.icon" class="h-5 w-5" :class="card.tone" />
+              <div class="mt-4 text-sm text-gray-500">{{ card.label }}</div>
+              <div class="mt-1 text-3xl font-semibold">{{ formatNumber(card.value) }}</div>
+              <div class="mt-1 text-xs text-gray-500">{{ card.hint }}</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-lg border border-amber-400/40 bg-amber-50 p-5 text-amber-950 shadow-sm dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">
+          <div class="flex items-start gap-3">
+            <AlertTriangle class="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <h2 class="text-sm font-semibold">Custo estimado parcial</h2>
+              <p class="mt-2 text-sm leading-6">
+                Tokens e custo estimado entram somente para OpenAI e Claude/Anthropic. Providers locais ou compativeis aparecem no uso geral, mas ainda ficam fora do calculo financeiro.
+              </p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div class="text-xs font-semibold uppercase text-gray-500">Uso contabilizado</div>
+            <div class="mt-1 text-sm text-gray-500">Distribuicao dos tokens com custo rastreado.</div>
+          </div>
+          <div class="inline-flex rounded-md border border-gray-300 bg-gray-50 p-1 text-sm dark:border-slate-700 dark:bg-slate-950">
+            <button class="rounded px-3 py-1.5" :class="activeView === 'overview' ? 'bg-white text-ink shadow-sm dark:bg-slate-800 dark:text-slate-100' : 'text-gray-500'" @click="activeView = 'overview'">Resumo</button>
+            <button class="rounded px-3 py-1.5" :class="activeView === 'providers' ? 'bg-white text-ink shadow-sm dark:bg-slate-800 dark:text-slate-100' : 'text-gray-500'" @click="activeView = 'providers'">Providers</button>
           </div>
         </div>
-      </div>
 
-      <div class="mb-6">
-        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Uso contabilizado</h2>
-        <div class="grid grid-cols-4 gap-4">
-          <div v-for="card in billableCards" :key="card.label" class="rounded-lg bg-white p-4 shadow-sm">
-            <div class="text-sm text-gray-500">{{ card.label }}</div>
-            <div class="mt-2 text-2xl font-semibold">{{ card.value }}</div>
+        <template v-if="activeView === 'overview'">
+          <div class="grid gap-3 md:grid-cols-4">
+            <div v-for="card in billableCards" :key="card.label" class="rounded-md border border-gray-200 bg-gray-50 p-4 dark:border-slate-800 dark:bg-slate-950">
+              <div class="text-sm text-gray-500">{{ card.label }}</div>
+              <div class="mt-2 text-2xl font-semibold">{{ typeof card.value === 'number' ? formatNumber(card.value) : card.value }}</div>
+              <div class="mt-1 text-xs text-gray-500">{{ card.hint }}</div>
+            </div>
           </div>
+
+          <div class="mt-5">
+            <div class="mb-2 flex justify-between text-xs text-gray-500">
+              <span>Prompt {{ promptShare }}%</span>
+              <span>Completion {{ completionShare }}%</span>
+            </div>
+            <div class="flex h-3 overflow-hidden rounded-full bg-gray-100 dark:bg-slate-950">
+              <div class="bg-cyan-400" :style="{ width: `${promptShare}%` }" />
+              <div class="bg-emerald-400" :style="{ width: `${completionShare}%` }" />
+            </div>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="mb-4 flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 dark:border-slate-700">
+            <Search class="h-4 w-4 text-gray-500" />
+            <input v-model="providerFilter" class="w-full border-0 bg-transparent p-0 text-sm outline-none" placeholder="Filtrar provider" />
+          </div>
+
+          <div class="grid gap-3">
+            <article v-for="row in filteredProviders" :key="`${row.provider}-${row.provider_type}`" class="rounded-md border border-gray-200 bg-gray-50 p-4 dark:border-slate-800 dark:bg-slate-950">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div class="font-semibold">{{ row.provider }}</div>
+                  <div class="mt-1 text-xs uppercase text-gray-500">{{ row.provider_type }}</div>
+                </div>
+                <div class="text-right">
+                  <div class="font-semibold">{{ formatNumber(row.total_tokens) }}</div>
+                  <div class="text-xs text-gray-500">{{ formatCurrency(row.estimated_cost) }}</div>
+                </div>
+              </div>
+              <div class="mt-4 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-slate-800">
+                <div class="h-full rounded-full bg-brand" :style="{ width: providerWidth(row.total_tokens) }" />
+              </div>
+              <div class="mt-3 grid grid-cols-2 gap-3 text-xs text-gray-500">
+                <div>Prompt: <span class="font-semibold text-ink dark:text-slate-100">{{ formatNumber(row.prompt_tokens) }}</span></div>
+                <div>Completion: <span class="font-semibold text-ink dark:text-slate-100">{{ formatNumber(row.completion_tokens) }}</span></div>
+              </div>
+            </article>
+
+            <div v-if="!filteredProviders.length" class="rounded-md border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-slate-700">
+              Nenhum provider encontrado.
+            </div>
+          </div>
+        </template>
+      </section>
+
+      <section class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="mb-3 flex items-center gap-2">
+          <BarChart3 class="h-4 w-4 text-brand" />
+          <h2 class="text-sm font-semibold">Providers via ambiente</h2>
         </div>
-      </div>
-
-      <div class="overflow-auto rounded-lg bg-white shadow-sm">
-        <table class="w-full text-left text-sm">
-          <thead class="border-b border-gray-100 text-gray-500">
-            <tr>
-              <th class="p-3">Provider</th>
-              <th class="p-3">Tipo</th>
-              <th class="p-3">Prompt</th>
-              <th class="p-3">Completion</th>
-              <th class="p-3">Total</th>
-              <th class="p-3">Custo</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in stats.billable_usage?.by_provider ?? []" :key="`${row.provider}-${row.provider_type}`" class="border-b border-gray-100">
-              <td class="p-3 font-medium">{{ row.provider }}</td>
-              <td class="p-3">{{ row.provider_type }}</td>
-              <td class="p-3">{{ row.prompt_tokens }}</td>
-              <td class="p-3">{{ row.completion_tokens }}</td>
-              <td class="p-3">{{ row.total_tokens }}</td>
-              <td class="p-3">${{ row.estimated_cost }}</td>
-            </tr>
-            <tr v-if="!(stats.billable_usage?.by_provider ?? []).length">
-              <td class="p-3 text-gray-500" colspan="6">Nenhum uso contabilizado de OpenAI ou Claude ainda.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="mt-6 rounded-lg bg-white p-4 shadow-sm">
-        <div class="text-sm text-gray-500">Providers via ambiente</div>
-        <div class="mt-2 flex flex-wrap gap-2">
-          <span v-for="provider in stats.general?.configured_env_providers ?? []" :key="provider" class="rounded-md bg-gray-100 px-2 py-1 text-xs">
+        <div class="flex flex-wrap gap-2">
+          <span v-for="provider in stats.general?.configured_env_providers ?? []" :key="provider" class="rounded-md bg-gray-100 px-2.5 py-1 text-xs font-medium dark:bg-slate-800">
             {{ provider }}
           </span>
           <span v-if="!(stats.general?.configured_env_providers ?? []).length" class="text-sm text-gray-500">Nenhum provider configurado por .env.</span>
         </div>
-      </div>
+      </section>
     </section>
   </AppShell>
 </template>

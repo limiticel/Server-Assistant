@@ -1,13 +1,13 @@
 # Self Hosted AI Platform
 
-Plataforma de IA auto-hospedada inspirada no ChatGPT, com backend Rust/Axum, frontend Vue 3 e integração planejada com `limiticel/orchestrator-rust` para MCP, contexto e function calling.
+Plataforma de IA auto-hospedada inspirada no ChatGPT, com backend Rust/Axum, frontend Vue 3, function calling e ferramentas dinamicas criadas pelo painel.
 
 ## Estrutura
 
-- `backend/`: API Rust com arquitetura limpa, JWT, providers de IA, SSE e gateway compatível com OpenAI.
+- `backend/`: API Rust com arquitetura limpa, JWT, providers de IA, SSE, gateway compativel com OpenAI e executor local de tools.
 - `frontend/`: Vue 3 + Vite + TypeScript + Pinia + Vue Router + Axios + TailwindCSS.
 - `deploy/`: Nginx, systemd e Docker Compose.
-- `scripts/`: instalação, backup, restore e vendorização do Orchestrator.
+- `scripts/`: instalacao, backup e restore.
 
 ## Desenvolvimento
 
@@ -18,17 +18,20 @@ cd backend && cargo run
 cd frontend && npm install && npm run dev
 ```
 
-## Orchestrator-Rust
+## Ferramentas Dinamicas
 
-O projeto externo fica em `backend/orchestrator-rust`. O backend possui apenas um adapter HTTP em `backend/src/infrastructure/mcp/orchestrator.rs`; a criacao, registro e execucao de ferramentas MCP acontece no Orchestrator.
+As ferramentas sao criadas no painel em `/admin/mcp-tools`, salvas na tabela `mcp_tools` e executadas pelo proprio backend. O chat carrega as ferramentas atribuidas ao modelo em `model_mcp_tools`, envia os schemas para o provider como function calling e executa a chamada localmente quando o modelo escolhe uma tool.
 
-```bash
-./scripts/vendor_orchestrator.sh
-```
+Tipos suportados no executor local:
 
-Fonte consultada: https://github.com/limiticel/orchestrator-rust
+- `kind: "api"` ou `"http"`: chama uma API HTTP/HTTPS usando `method`, `url`, `headers`, `query`, `body` e `timeout_seconds`.
+- `kind: "infra"`: executa acoes de infraestrutura com acesso total. Os parametros esperados definem o runtime e os dados necessarios, por exemplo `runtime: "local"` ou `runtime: "ssh"`.
+- `kind: "ssh"` ou `"infra_ssh"`: executa comandos SSH nao interativos em um servidor autorizado.
+- `kind: "abstract"`, `"static"` ou `"text"`: retorna texto/instrucoes com interpolacao simples de argumentos.
 
-## Rotas principais
+Templates podem usar `{{nome_do_parametro}}` em `url`, `headers`, `query`, `body` e respostas estaticas.
+
+## Rotas Principais
 
 - `POST /api/auth/login`
 - `POST /api/auth/register`
@@ -40,6 +43,8 @@ Fonte consultada: https://github.com/limiticel/orchestrator-rust
 - `GET /api/admin/providers`
 - `GET /api/admin/models`
 - `GET /api/admin/personalities`
+- `GET /api/admin/mcp-tools`
+- `POST /api/admin/mcp-tools`
 - `GET /api/mcp/tools`
 - `POST /api/mcp/tools/:name/call`
 - `GET /v1/models`
@@ -48,35 +53,50 @@ Fonte consultada: https://github.com/limiticel/orchestrator-rust
 
 ## Testar Um Provider No Chat
 
-1. Abra `http://localhost:5173/admin/providers`.
-2. Escolha um preset, por exemplo OpenAI, DeepSeek, Ollama ou Compatível.
-3. Preencha `Base URL`, `API Key` e `Modelo padrão`.
+1. Abra `http://localhost:48117/admin/providers`.
+2. Escolha um preset, por exemplo OpenAI, DeepSeek, Ollama ou Compativel.
+3. Preencha `Base URL`, `API Key` e `Modelo padrao`.
 4. Salve o provider.
-5. Abra `http://localhost:5173/`, selecione o provider/modelo no topo do chat e envie uma mensagem.
+5. Abra `http://localhost:48117/`, selecione o provider/modelo no topo do chat e envie uma mensagem.
 
 Exemplos de Base URL:
 
 - OpenAI: `https://api.openai.com/v1`
 - DeepSeek: `https://api.deepseek.com/v1`
 - Ollama: `http://localhost:11434/v1`
-- API compatível com OpenAI: use a URL `/v1` do serviço.
+- API compativel com OpenAI: use a URL `/v1` do servico.
 
-Nesta fase local, a chave é gravada no campo `api_key_cipher` para permitir teste rápido. Para produção, substitua por criptografia/secret manager.
+Nesta fase local, a chave e gravada no campo `api_key_cipher` para permitir teste rapido. Para producao, substitua por criptografia/secret manager.
 
-## Ferramentas MCP Internas
+## Exemplo De Tool API
 
-### `ubuntu_server_ssh`
+Config:
 
-Registrada em `backend/orchestrator-rust/src/tools/server_admin.rs`. Executa comandos no Ubuntu Server por SSH usando `127.0.0.1:2222`.
+```json
+{
+  "kind": "api",
+  "method": "POST",
+  "url": "https://api.exemplo.com/clientes",
+  "headers": {
+    "Authorization": "Bearer {{api_key}}",
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "nome": "{{nome}}",
+    "email": "{{email}}"
+  },
+  "timeout_seconds": 30
+}
+```
 
-Payload:
+Payload de teste:
 
 ```json
 {
   "arguments": {
-    "username": "usuario_ssh",
-    "command": "hostname",
-    "timeout_seconds": 30
+    "api_key": "token",
+    "nome": "Acme",
+    "email": "financeiro@acme.com"
   }
 }
 ```
@@ -84,12 +104,10 @@ Payload:
 Rota:
 
 ```bash
-POST /api/mcp/tools/ubuntu_server_ssh/call
+POST /api/mcp/tools/minha_tool/call
 ```
 
-Para automação, configure autenticação por chave SSH ou defina `UBUNTU_SSH_DEFAULT_USER` no `.env`.
-
-## Produção
+## Producao
 
 ```bash
 cp .env.example .env

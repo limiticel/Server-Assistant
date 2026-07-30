@@ -6,14 +6,14 @@ services:
       POSTGRES_USER: server_assistant
       POSTGRES_PASSWORD: server_assistant
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "56379:6379"
 
   backend:
     build:
@@ -22,8 +22,13 @@ services:
     depends_on:
       - postgres
       - redis
+    environment:
+      APP_PORT: 48118
+      DATABASE_URL: postgres://server_assistant:server_assistant@postgres:5432/server_assistant?options=-csearch_path%3Dserver_assistant%2Cpublic
+      CORS_ORIGINS: http://localhost:48117
+      REDIS_URL: redis://redis:6379/0
     ports:
-      - "8080:8080"
+      - "48118:48118"
 
   frontend:
     build:
@@ -31,8 +36,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "5173:80"
+      - "48117:80"
 
 volumes:
   postgres_data:
-
