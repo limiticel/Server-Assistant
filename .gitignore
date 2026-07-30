@@ -4,6 +4,7 @@ dist/
 .env
 .env.local
 *.log
+.fake_credit_proposals.json
 backend/.sqlx/
 backend/orchestrator-rust/.git/
 backend/orchestrator-rust/target/

@@ -1,4 +1,6 @@
 from hashlib import sha256
+import json
+from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
@@ -7,7 +9,7 @@ from pydantic import BaseModel
 
 
 app = FastAPI(title="Fake Credit API", version="0.1.0")
-PROPOSALS: dict[str, dict] = {}
+PROPOSALS_FILE = Path(__file__).with_name(".fake_credit_proposals.json")
 
 
 class CreditSimulation(BaseModel):
@@ -62,6 +64,32 @@ def only_digits(value: str) -> str:
     return "".join(char for char in value if char.isdigit())
 
 
+def load_proposals() -> dict[str, dict]:
+    if not PROPOSALS_FILE.exists():
+        return {}
+
+    try:
+        data = json.loads(PROPOSALS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    return {
+        str(key): value
+        for key, value in data.items()
+        if isinstance(value, dict)
+    }
+
+
+def save_proposals(proposals: dict[str, dict]) -> None:
+    PROPOSALS_FILE.write_text(
+        json.dumps(proposals, ensure_ascii=True, indent=2),
+        encoding="utf-8",
+    )
+
+
 def fake_number(seed: str, minimum: int, maximum: int) -> int:
     digest = sha256(seed.encode("utf-8")).hexdigest()
     number = int(digest[:12], 16)
@@ -109,14 +137,16 @@ def normalize_proposal_id(proposal_id: str) -> str:
 
 
 def find_proposal(proposal_id: str | None = None, cpf: str | None = None) -> dict:
+    proposals = load_proposals()
+
     if proposal_id:
-        proposal = PROPOSALS.get(normalize_proposal_id(proposal_id))
+        proposal = proposals.get(normalize_proposal_id(proposal_id))
         if proposal:
             return proposal
 
     if cpf:
         clean_cpf = only_digits(cpf)
-        matches = [proposal for proposal in PROPOSALS.values() if proposal["cpf"] == clean_cpf]
+        matches = [proposal for proposal in proposals.values() if proposal["cpf"] == clean_cpf]
         if matches:
             return matches[-1]
 
@@ -127,10 +157,15 @@ def find_proposal(proposal_id: str | None = None, cpf: str | None = None) -> dic
 
 
 def build_proposal_status_response(proposal: dict) -> ProposalStatusResponse:
+    proposals = load_proposals()
+
     proposal["status_checks"] += 1
 
     if proposal["status"] == "created" and proposal["status_checks"] >= 2:
         proposal["status"] = "approved"
+
+    proposals[proposal["proposal_id"]] = proposal
+    save_proposals(proposals)
 
     status = proposal["status"]
     if status == "approved":
@@ -157,7 +192,7 @@ def build_proposal_status_response(proposal: dict) -> ProposalStatusResponse:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "proposals_count": len(PROPOSALS)}
+    return {"status": "ok", "proposals_count": len(load_proposals())}
 
 
 @app.get("/credit/simulate", response_model=CreditSimulation)
@@ -173,6 +208,7 @@ def simulate_credit_post(payload: CreditSimulationRequest):
 @app.post("/proposals", response_model=ProposalCreateResponse)
 def create_proposal(payload: ProposalCreateRequest):
     simulation = build_credit_simulation(payload.cpf)
+    proposals = load_proposals()
 
     if payload.requested_amount <= 0:
         raise HTTPException(status_code=400, detail="Valor solicitado deve ser maior que zero.")
@@ -191,7 +227,7 @@ def create_proposal(payload: ProposalCreateRequest):
         status = "created"
         message = "Proposta criada com sucesso na API fake."
 
-    PROPOSALS[proposal_id] = {
+    proposals[proposal_id] = {
         "proposal_id": proposal_id,
         "cpf": simulation.cpf,
         "customer_name": payload.customer_name,
@@ -202,6 +238,7 @@ def create_proposal(payload: ProposalCreateRequest):
         "credit_limit": simulation.credit_limit,
         "status_checks": 0,
     }
+    save_proposals(proposals)
 
     return ProposalCreateResponse(
         proposal_id=proposal_id,
