@@ -2,7 +2,10 @@ use async_stream::stream;
 use futures::stream::BoxStream;
 use serde_json::Value;
 use sqlx::PgPool;
-use std::time::Instant;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -115,9 +118,15 @@ pub async fn agent_stream_with_model_tools(
     mut messages: Vec<ChatMessage>,
 ) -> Result<AgentStream, AppError> {
     let tools = load_tools_for_model(&state, &provider, &model).await?;
+    let tool_names = tools
+        .iter()
+        .map(|tool| tool.function.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let (model_tools, tool_name_map) = normalize_tool_names_for_model(tools);
     prepend_model_persona(&state, &provider, &model, &mut messages).await?;
 
-    if tools.is_empty() {
+    if model_tools.is_empty() {
         return Ok(Box::pin(stream! {
             yield Ok(AgentEvent::Status("Respondendo sem ferramentas atribuidas ao modelo.".to_owned()));
             yield Ok(AgentEvent::Status(format!("Conectando ao provider {provider} com o modelo {model}.")));
@@ -153,30 +162,12 @@ pub async fn agent_stream_with_model_tools(
         }));
     }
 
-    if tools.is_empty() {
-        let mut upstream = stream_chat(&state, &provider, &model, messages).await?;
-        return Ok(Box::pin(stream! {
-            yield Ok(AgentEvent::Status("Respondendo sem ferramentas atribuídas ao modelo.".to_owned()));
-            while let Some(item) = futures::StreamExt::next(&mut upstream).await {
-                match item {
-                    Ok(delta) => yield Ok(AgentEvent::Delta(delta)),
-                    Err(err) => yield Err(err),
-                }
-            }
-        }));
-    }
-
     let latest_user_message = messages
         .iter()
         .rev()
         .find(|message| message.role == "user")
         .map(|message| message.content.clone())
         .unwrap_or_default();
-    let tool_names = tools
-        .iter()
-        .map(|tool| tool.function.name.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
     let should_require_tool = should_require_tool_call(&latest_user_message);
 
     prepend_system_message(&mut messages, TOOL_SYSTEM_PROMPT.to_owned());
@@ -192,7 +183,7 @@ pub async fn agent_stream_with_model_tools(
             yield Ok(AgentEvent::Status(format!("Rodada {round}/{max_tool_rounds}: chamando {provider}/{model} para decidir o proximo passo.")));
             let decision_started_at = Instant::now();
             let require_tool = round == 1 && should_require_tool;
-            let decision = match complete_chat_with_tools(&state, &provider, &model, messages.clone(), tools.clone(), require_tool).await {
+            let decision = match complete_chat_with_tools(&state, &provider, &model, messages.clone(), model_tools.clone(), require_tool).await {
                 Ok(decision) => decision,
                 Err(err) => {
                     yield Err(err);
@@ -222,13 +213,14 @@ pub async fn agent_stream_with_model_tools(
 
             for call in decision.tool_calls {
                 let arguments = serde_json::from_str::<Value>(&call.function.arguments).unwrap_or_else(|_| Value::String(call.function.arguments.clone()));
+                let display_name = tool_name_map.real_name(&call.function.name).to_owned();
                 yield Ok(AgentEvent::ToolStart {
-                    name: call.function.name.clone(),
+                    name: display_name.clone(),
                     arguments,
                 });
 
                 let tool_started_at = Instant::now();
-                let result = match call_model_tool(&state, &call).await {
+                let result = match call_model_tool(&state, &call, &tool_name_map).await {
                     Ok(result) => result,
                     Err(err) => {
                         yield Err(err);
@@ -237,12 +229,12 @@ pub async fn agent_stream_with_model_tools(
                 };
 
                 yield Ok(AgentEvent::ToolResult {
-                    name: call.function.name.clone(),
+                    name: display_name.clone(),
                     result: result.clone(),
                 });
                 yield Ok(AgentEvent::Status(format!(
                     "Tool {} finalizada em {:.1}s.",
-                    call.function.name,
+                    display_name,
                     tool_started_at.elapsed().as_secs_f32()
                 )));
 
@@ -544,6 +536,106 @@ async fn load_tools_for_model(
         .collect())
 }
 
+#[derive(Clone, Default)]
+struct ToolNameMap {
+    safe_to_real: HashMap<String, String>,
+}
+
+impl ToolNameMap {
+    fn real_name<'a>(&'a self, model_name: &'a str) -> &'a str {
+        self.safe_to_real
+            .get(model_name)
+            .map(String::as_str)
+            .unwrap_or(model_name)
+    }
+}
+
+fn normalize_tool_names_for_model(tools: Vec<ChatTool>) -> (Vec<ChatTool>, ToolNameMap) {
+    let mut used = HashSet::new();
+    let mut safe_to_real = HashMap::new();
+    let model_tools = tools
+        .into_iter()
+        .map(|mut tool| {
+            let real_name = tool.function.name.clone();
+            let safe_name = safe_tool_name(&real_name, &mut used);
+            if safe_name != real_name {
+                tool.function.description = format!(
+                    "{}\n\nNome original da ferramenta no sistema: {}",
+                    tool.function.description, real_name
+                );
+            }
+            tool.function.name = safe_name.clone();
+            safe_to_real.insert(safe_name, real_name);
+            tool
+        })
+        .collect();
+
+    (model_tools, ToolNameMap { safe_to_real })
+}
+
+fn safe_tool_name(name: &str, used: &mut HashSet<String>) -> String {
+    let mut base = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    base = base
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    base = base.trim_matches('_').to_owned();
+
+    if base.is_empty() {
+        base = "tool".to_owned();
+    }
+
+    base.truncate(64);
+    let mut candidate = base.clone();
+    let mut suffix = 2;
+    while used.contains(&candidate) {
+        let suffix_text = format!("_{suffix}");
+        let max_base_len = 64usize.saturating_sub(suffix_text.len());
+        let mut prefix = base.clone();
+        prefix.truncate(max_base_len);
+        candidate = format!("{prefix}{suffix_text}");
+        suffix += 1;
+    }
+    used.insert(candidate.clone());
+    candidate
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_tool_name_removes_openai_invalid_characters() {
+        let mut used = HashSet::new();
+
+        let name = safe_tool_name("consignado criar simulação", &mut used);
+
+        assert_eq!(name, "consignado_criar_simula_o");
+    }
+
+    #[test]
+    fn safe_tool_name_deduplicates_collisions() {
+        let mut used = HashSet::new();
+
+        let first = safe_tool_name("minha tool", &mut used);
+        let second = safe_tool_name("minha_tool", &mut used);
+
+        assert_eq!(first, "minha_tool");
+        assert_eq!(second, "minha_tool_2");
+    }
+}
+
 async fn prepend_model_persona(
     state: &AppState,
     provider: &str,
@@ -667,11 +759,16 @@ fn prepend_system_message(messages: &mut Vec<ChatMessage>, content: String) {
     );
 }
 
-async fn call_model_tool(state: &AppState, call: &ChatToolCall) -> Result<Value, AppError> {
+async fn call_model_tool(
+    state: &AppState,
+    call: &ChatToolCall,
+    tool_name_map: &ToolNameMap,
+) -> Result<Value, AppError> {
     let mut arguments = serde_json::from_str::<Value>(&call.function.arguments)
         .map_err(|err| AppError::Validation(format!("invalid tool arguments: {err}")))?;
-    merge_tool_config_arguments(state, &call.function.name, &mut arguments).await?;
-    dynamic_tools::call_tool(&state.db, &call.function.name, arguments).await
+    let real_name = tool_name_map.real_name(&call.function.name);
+    merge_tool_config_arguments(state, real_name, &mut arguments).await?;
+    dynamic_tools::call_tool(&state.db, real_name, arguments).await
 }
 
 async fn merge_tool_config_arguments(
