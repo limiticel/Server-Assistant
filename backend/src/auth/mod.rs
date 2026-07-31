@@ -13,10 +13,23 @@ pub struct Claims {
 }
 
 pub fn issue_access_token(user_id: Uuid, role: &str, secret: &str) -> Result<String, AppError> {
+    issue_token(user_id, role, secret, Duration::hours(12))
+}
+
+pub fn issue_refresh_token(user_id: Uuid, role: &str, secret: &str) -> Result<String, AppError> {
+    issue_token(user_id, role, secret, Duration::days(30))
+}
+
+fn issue_token(
+    user_id: Uuid,
+    role: &str,
+    secret: &str,
+    lifetime: Duration,
+) -> Result<String, AppError> {
     let claims = Claims {
         sub: user_id,
         role: role.to_owned(),
-        exp: (Utc::now() + Duration::minutes(30)).timestamp() as usize,
+        exp: (Utc::now() + lifetime).timestamp() as usize,
     };
     encode(
         &Header::default(),

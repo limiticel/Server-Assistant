@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    auth::{issue_access_token, verify_access_token, Claims},
+    auth::{issue_access_token, issue_refresh_token, verify_access_token, Claims},
     shared::AppError,
     AppState,
 };
@@ -33,6 +33,11 @@ struct ProfileUpdateRequest {
     name: String,
 }
 
+#[derive(Deserialize)]
+struct RefreshRequest {
+    refresh_token: String,
+}
+
 #[derive(Serialize)]
 struct ProfileResponse {
     id: Uuid,
@@ -45,6 +50,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/login", post(login))
         .route("/register", post(register))
+        .route("/refresh", post(refresh))
         .route("/me", get(me).put(update_me))
 }
 
@@ -60,7 +66,7 @@ async fn login(
 
     let (user_id, role) = row.ok_or(AppError::Unauthorized)?;
     let access_token = issue_access_token(user_id, &role, &state.settings.jwt_secret)?;
-    let refresh_token = issue_access_token(user_id, &role, &state.settings.jwt_refresh_secret)?;
+    let refresh_token = issue_refresh_token(user_id, &role, &state.settings.jwt_refresh_secret)?;
     Ok(Json(AuthResponse {
         access_token,
         refresh_token,
@@ -85,13 +91,34 @@ async fn register(
         .await?;
 
     let access_token = issue_access_token(user_id, &role, &state.settings.jwt_secret)?;
-    let refresh_token = issue_access_token(user_id, &role, &state.settings.jwt_refresh_secret)?;
+    let refresh_token = issue_refresh_token(user_id, &role, &state.settings.jwt_refresh_secret)?;
 
     Ok(Json(AuthResponse {
         access_token,
         refresh_token,
         user_id,
         role,
+    }))
+}
+
+async fn refresh(
+    State(state): State<AppState>,
+    Json(payload): Json<RefreshRequest>,
+) -> Result<Json<AuthResponse>, AppError> {
+    let claims = verify_access_token(&payload.refresh_token, &state.settings.jwt_refresh_secret)?;
+    let profile = load_profile(&state, claims.sub).await?;
+    let access_token = issue_access_token(profile.id, &profile.role, &state.settings.jwt_secret)?;
+    let refresh_token = issue_refresh_token(
+        profile.id,
+        &profile.role,
+        &state.settings.jwt_refresh_secret,
+    )?;
+
+    Ok(Json(AuthResponse {
+        access_token,
+        refresh_token,
+        user_id: profile.id,
+        role: profile.role,
     }))
 }
 
