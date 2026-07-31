@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Braces, ChevronLeft, ChevronRight, Globe2, Layers3, Pencil, Plus, RefreshCw, Save, Search, Server, Trash2, X } from '@lucide/vue'
+import { Braces, ChevronLeft, ChevronRight, GripVertical, Globe2, Layers3, Pencil, Plus, RefreshCw, Save, Search, Server, Trash2, X } from '@lucide/vue'
 import ConfirmModal from '../../components/ConfirmModal.vue'
 import MessageModal from '../../components/MessageModal.vue'
 import AppShell from '../../layouts/AppShell.vue'
@@ -62,7 +62,7 @@ const physical = reactive({
 const abstractTool = reactive({
   executionMode: 'sequential',
   instructions: '',
-  toolSequenceText: '[]',
+  toolSequence: [] as string[],
   staticResponse: ''
 })
 
@@ -79,6 +79,10 @@ const editForm = reactive({
 const physicalTools = computed(() => tools.value.filter((tool) => tool.tool_type === 'physical' && !isInfraConfig(tool.config)))
 const abstractTools = computed(() => tools.value.filter((tool) => tool.tool_type === 'abstract'))
 const infraTools = computed(() => tools.value.filter((tool) => isInfraConfig(tool.config)))
+const callableTools = computed(() => tools.value.filter((tool) => tool.enabled && tool.tool_type === 'physical'))
+const availableSequenceTools = computed(() =>
+  callableTools.value.filter((tool) => !abstractTool.toolSequence.includes(tool.name))
+)
 const filteredTools = computed(() => {
   const query = toolSearch.value.trim().toLowerCase()
   if (!query) return tools.value
@@ -99,6 +103,8 @@ const totalPages = computed(() => Math.max(1, Math.ceil(filteredTools.value.leng
 const pageStart = computed(() => (currentPage.value - 1) * pageSize.value)
 const pageEnd = computed(() => Math.min(pageStart.value + pageSize.value, filteredTools.value.length))
 const paginatedTools = computed(() => filteredTools.value.slice(pageStart.value, pageEnd.value))
+const selectedSequenceTool = ref('')
+const draggedSequenceIndex = ref<number | null>(null)
 
 function parseJson(text: string, label: string) {
   try {
@@ -147,7 +153,8 @@ function resetForm() {
   physical.responseSchemaText = '{\n  "type": "object",\n  "properties": {}\n}'
   abstractTool.executionMode = 'sequential'
   abstractTool.instructions = ''
-  abstractTool.toolSequenceText = '[]'
+  abstractTool.toolSequence = []
+  selectedSequenceTool.value = ''
   abstractTool.staticResponse = ''
   if (selectedType.value === 'infra') {
     base.inputSchemaText = infraInputSchemaText()
@@ -205,7 +212,7 @@ function buildCreatePayload(): ToolPayload {
           kind: 'abstract',
           execution_mode: abstractTool.executionMode,
           instructions: abstractTool.instructions,
-          tool_sequence: parseJsonArray(abstractTool.toolSequenceText, 'Sequencia de ferramentas'),
+          tool_sequence: abstractTool.toolSequence,
           static_response: abstractTool.staticResponse
         },
         response_schema: {},
@@ -313,6 +320,36 @@ function infraInputSchemaText() {
     null,
     2
   )
+}
+
+function addSequenceTool() {
+  const name = selectedSequenceTool.value
+  if (!name || abstractTool.toolSequence.includes(name)) return
+  abstractTool.toolSequence.push(name)
+  selectedSequenceTool.value = ''
+}
+
+function removeSequenceTool(index: number) {
+  abstractTool.toolSequence.splice(index, 1)
+}
+
+function moveSequenceTool(fromIndex: number, toIndex: number) {
+  if (fromIndex === toIndex) return
+  if (fromIndex < 0 || toIndex < 0) return
+  if (fromIndex >= abstractTool.toolSequence.length || toIndex >= abstractTool.toolSequence.length) return
+
+  const [item] = abstractTool.toolSequence.splice(fromIndex, 1)
+  abstractTool.toolSequence.splice(toIndex, 0, item)
+}
+
+function startSequenceDrag(index: number) {
+  draggedSequenceIndex.value = index
+}
+
+function dropSequenceTool(index: number) {
+  if (draggedSequenceIndex.value === null) return
+  moveSequenceTool(draggedSequenceIndex.value, index)
+  draggedSequenceIndex.value = null
 }
 
 function toolKind(tool: McpTool) {
@@ -525,7 +562,53 @@ onMounted(load)
             <textarea v-model="abstractTool.instructions" class="min-h-28 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm" placeholder="Instrucoes da ferramenta abstrata" />
             <div>
               <label class="mb-1 block text-xs font-medium text-gray-500">Ferramentas chamadas</label>
-              <textarea v-model="abstractTool.toolSequenceText" class="h-24 w-full resize-none rounded-md border border-gray-300 p-3 font-mono text-xs" spellcheck="false" />
+              <div class="rounded-md border border-gray-300 bg-white p-3">
+                <div class="flex gap-2">
+                  <select v-model="selectedSequenceTool" class="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm">
+                    <option value="">Selecionar ferramenta</option>
+                    <option v-for="tool in availableSequenceTools" :key="tool.id" :value="tool.name">
+                      {{ tool.name }}
+                    </option>
+                  </select>
+                  <button
+                    class="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+                    type="button"
+                    :disabled="!selectedSequenceTool"
+                    @click="addSequenceTool"
+                  >
+                    <Plus class="h-4 w-4" />
+                    Adicionar
+                  </button>
+                </div>
+
+                <div v-if="abstractTool.toolSequence.length" class="mt-3 space-y-2">
+                  <div
+                    v-for="(toolName, index) in abstractTool.toolSequence"
+                    :key="toolName"
+                    class="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2 py-2 text-sm"
+                    draggable="true"
+                    @dragstart="startSequenceDrag(index)"
+                    @dragover.prevent
+                    @drop="dropSequenceTool(index)"
+                  >
+                    <GripVertical class="h-4 w-4 shrink-0 cursor-grab text-gray-400" />
+                    <span class="grid h-6 w-6 shrink-0 place-items-center rounded bg-white text-xs font-semibold text-gray-500">{{ index + 1 }}</span>
+                    <span class="min-w-0 flex-1 truncate font-medium">{{ toolName }}</span>
+                    <button
+                      class="grid h-7 w-7 shrink-0 place-items-center rounded-md text-gray-400 hover:bg-white hover:text-red-600"
+                      type="button"
+                      title="Remover da sequencia"
+                      @click="removeSequenceTool(index)"
+                    >
+                      <X class="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div v-else class="mt-3 rounded-md border border-dashed border-gray-300 p-4 text-center text-xs text-gray-500">
+                  Nenhuma ferramenta adicionada.
+                </div>
+              </div>
             </div>
             <textarea v-model="abstractTool.staticResponse" class="min-h-20 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm" placeholder="Texto retornado em casos especificos" />
           </template>
