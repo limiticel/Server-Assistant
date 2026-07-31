@@ -83,6 +83,7 @@ const callableTools = computed(() => tools.value.filter((tool) => tool.enabled &
 const availableSequenceTools = computed(() =>
   callableTools.value.filter((tool) => !abstractTool.toolSequence.includes(tool.name))
 )
+const usesToolList = computed(() => abstractTool.executionMode === 'sequential' || abstractTool.executionMode === 'parallel')
 const filteredTools = computed(() => {
   const query = toolSearch.value.trim().toLowerCase()
   if (!query) return tools.value
@@ -343,10 +344,12 @@ function moveSequenceTool(fromIndex: number, toIndex: number) {
 }
 
 function startSequenceDrag(index: number) {
+  if (abstractTool.executionMode !== 'sequential') return
   draggedSequenceIndex.value = index
 }
 
 function dropSequenceTool(index: number) {
+  if (abstractTool.executionMode !== 'sequential') return
   if (draggedSequenceIndex.value === null) return
   moveSequenceTool(draggedSequenceIndex.value, index)
   draggedSequenceIndex.value = null
@@ -560,8 +563,10 @@ onMounted(load)
               <option value="text">Responder com texto/instrucao</option>
             </select>
             <textarea v-model="abstractTool.instructions" class="min-h-28 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm" placeholder="Instrucoes da ferramenta abstrata" />
-            <div>
-              <label class="mb-1 block text-xs font-medium text-gray-500">Ferramentas chamadas</label>
+            <div v-if="abstractTool.executionMode !== 'text'">
+              <label class="mb-1 block text-xs font-medium text-gray-500">
+                {{ abstractTool.executionMode === 'sequential' ? 'Ferramentas chamadas em ordem' : 'Ferramentas chamadas sem ordem' }}
+              </label>
               <div class="rounded-md border border-gray-300 bg-white p-3">
                 <div class="flex gap-2">
                   <select v-model="selectedSequenceTool" class="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm">
@@ -586,13 +591,18 @@ onMounted(load)
                     v-for="(toolName, index) in abstractTool.toolSequence"
                     :key="toolName"
                     class="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2 py-2 text-sm"
-                    draggable="true"
+                    :draggable="abstractTool.executionMode === 'sequential'"
                     @dragstart="startSequenceDrag(index)"
                     @dragover.prevent
                     @drop="dropSequenceTool(index)"
                   >
-                    <GripVertical class="h-4 w-4 shrink-0 cursor-grab text-gray-400" />
-                    <span class="grid h-6 w-6 shrink-0 place-items-center rounded bg-white text-xs font-semibold text-gray-500">{{ index + 1 }}</span>
+                    <GripVertical v-if="abstractTool.executionMode === 'sequential'" class="h-4 w-4 shrink-0 cursor-grab text-gray-400" />
+                    <span
+                      class="grid h-6 w-6 shrink-0 place-items-center rounded bg-white text-xs font-semibold text-gray-500"
+                      :title="abstractTool.executionMode === 'sequential' ? 'Ordem de execucao' : 'Item da lista'"
+                    >
+                      {{ abstractTool.executionMode === 'sequential' ? index + 1 : '•' }}
+                    </span>
                     <span class="min-w-0 flex-1 truncate font-medium">{{ toolName }}</span>
                     <button
                       class="grid h-7 w-7 shrink-0 place-items-center rounded-md text-gray-400 hover:bg-white hover:text-red-600"
@@ -610,7 +620,18 @@ onMounted(load)
                 </div>
               </div>
             </div>
-            <textarea v-model="abstractTool.staticResponse" class="min-h-20 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm" placeholder="Texto retornado em casos especificos" />
+            <textarea
+              v-if="abstractTool.executionMode === 'text'"
+              v-model="abstractTool.staticResponse"
+              class="min-h-24 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm"
+              placeholder="Texto ou instrucao retornada pela ferramenta abstrata"
+            />
+            <textarea
+              v-else
+              v-model="abstractTool.staticResponse"
+              class="min-h-20 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm"
+              placeholder="Texto retornado em casos especificos"
+            />
           </template>
 
           <label class="flex items-center gap-2 text-sm">
