@@ -212,9 +212,9 @@ function buildCreatePayload(): ToolPayload {
         config: {
           kind: 'abstract',
           execution_mode: abstractTool.executionMode,
-          instructions: abstractTool.instructions,
-          tool_sequence: abstractTool.toolSequence,
-          static_response: abstractTool.staticResponse
+          instructions: usesToolList.value ? abstractTool.instructions : '',
+          tool_sequence: usesToolList.value ? abstractTool.toolSequence : [],
+          static_response: abstractTool.executionMode === 'text' ? abstractTool.staticResponse : ''
         },
         response_schema: {},
         enabled: base.enabled
@@ -562,8 +562,8 @@ onMounted(load)
               <option value="parallel">Chamar ferramentas sem ordem</option>
               <option value="text">Responder com texto/instrucao</option>
             </select>
-            <textarea v-model="abstractTool.instructions" class="min-h-28 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm" placeholder="Instrucoes da ferramenta abstrata" />
-            <div v-if="abstractTool.executionMode !== 'text'">
+            <template v-if="usesToolList">
+              <textarea v-model="abstractTool.instructions" class="min-h-28 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm" placeholder="Instrucoes para executar essas ferramentas" />
               <label class="mb-1 block text-xs font-medium text-gray-500">
                 {{ abstractTool.executionMode === 'sequential' ? 'Ferramentas chamadas em ordem' : 'Ferramentas chamadas sem ordem' }}
               </label>
@@ -593,16 +593,18 @@ onMounted(load)
                     class="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2 py-2 text-sm"
                     :draggable="abstractTool.executionMode === 'sequential'"
                     @dragstart="startSequenceDrag(index)"
-                    @dragover.prevent
-                    @drop="dropSequenceTool(index)"
+                    @dragover="abstractTool.executionMode === 'sequential' ? $event.preventDefault() : undefined"
+                    @drop="abstractTool.executionMode === 'sequential' ? dropSequenceTool(index) : undefined"
                   >
                     <GripVertical v-if="abstractTool.executionMode === 'sequential'" class="h-4 w-4 shrink-0 cursor-grab text-gray-400" />
                     <span
+                      v-if="abstractTool.executionMode === 'sequential'"
                       class="grid h-6 w-6 shrink-0 place-items-center rounded bg-white text-xs font-semibold text-gray-500"
                       :title="abstractTool.executionMode === 'sequential' ? 'Ordem de execucao' : 'Item da lista'"
                     >
-                      {{ abstractTool.executionMode === 'sequential' ? index + 1 : '•' }}
+                      {{ index + 1 }}
                     </span>
+                    <span v-else class="mx-2 h-2 w-2 shrink-0 rounded-full bg-brand" title="Item da lista" />
                     <span class="min-w-0 flex-1 truncate font-medium">{{ toolName }}</span>
                     <button
                       class="grid h-7 w-7 shrink-0 place-items-center rounded-md text-gray-400 hover:bg-white hover:text-red-600"
@@ -619,18 +621,12 @@ onMounted(load)
                   Nenhuma ferramenta adicionada.
                 </div>
               </div>
-            </div>
-            <textarea
-              v-if="abstractTool.executionMode === 'text'"
-              v-model="abstractTool.staticResponse"
-              class="min-h-24 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm"
-              placeholder="Texto ou instrucao retornada pela ferramenta abstrata"
-            />
+            </template>
             <textarea
               v-else
               v-model="abstractTool.staticResponse"
-              class="min-h-20 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm"
-              placeholder="Texto retornado em casos especificos"
+              class="min-h-24 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm"
+              placeholder="Texto retornado pela ferramenta abstrata"
             />
           </template>
 
